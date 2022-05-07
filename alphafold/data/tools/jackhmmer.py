@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """Library to run Jackhmmer from Python."""
 
 from concurrent import futures
@@ -46,7 +48,8 @@ class Jackhmmer:
                incdom_e: Optional[float] = None,
                dom_e: Optional[float] = None,
                num_streamed_chunks: Optional[int] = None,
-               streaming_callback: Optional[Callable[[int], None]] = None):
+               streaming_callback: Optional[Callable[[int], None]] = None,
+               custom_tempdir = None):
     """Initializes the Python Jackhmmer wrapper.
 
     Args:
@@ -73,7 +76,7 @@ class Jackhmmer:
 
     if not os.path.exists(self.database_path) and num_streamed_chunks is None:
       logging.error('Could not find Jackhmmer database %s', database_path)
-      raise ValueError(f'Could not find Jackhmmer database {database_path}')
+      #raise ValueError(f'Could not find Jackhmmer database {database_path}')
 
     self.n_cpu = n_cpu
     self.n_iter = n_iter
@@ -86,13 +89,14 @@ class Jackhmmer:
     self.dom_e = dom_e
     self.get_tblout = get_tblout
     self.streaming_callback = streaming_callback
+    self.custom_tempdir = custom_tempdir
 
   def _query_chunk(self,
                    input_fasta_path: str,
                    database_path: str,
                    max_sequences: Optional[int] = None) -> Mapping[str, Any]:
     """Queries the database chunk using Jackhmmer."""
-    with utils.tmpdir_manager() as query_tmp_dir:
+    with utils.tmpdir_manager(self.custom_tempdir) as query_tmp_dir:
       sto_path = os.path.join(query_tmp_dir, 'output.sto')
 
       # The F1/F2/F3 are the expected proportion to pass each of the filtering

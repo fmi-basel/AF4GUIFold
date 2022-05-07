@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """Amber relaxation."""
 from typing import Any, Dict, Sequence, Tuple
 from alphafold.common import protein
@@ -56,7 +58,7 @@ class AmberRelaxation(object):
     self._use_gpu = use_gpu
 
   def process(self, *,
-              prot: protein.Protein) -> Tuple[str, Dict[str, Any], np.ndarray]:
+              prot: protein.Protein, standalone=False) -> Tuple[str, Dict[str, Any], np.ndarray]:
     """Runs Amber relax on a prediction, adds hydrogens, returns PDB string."""
     out = amber_minimize.run_pipeline(
         prot=prot, max_iterations=self._max_iterations,

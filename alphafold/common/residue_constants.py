@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """Constants used in AlphaFold."""
 
 import collections
 import functools
 import os
 from typing import List, Mapping, Tuple
+import pkg_resources
 
 import numpy as np
 import tree
@@ -403,9 +406,7 @@ def load_stereo_chemical_props() -> Tuple[Mapping[str, List[Bond]],
     residue_virtual_bonds: Dict that maps resname -> list of Bond tuples.
     residue_bond_angles: Dict that maps resname -> list of BondAngle tuples.
   """
-  stereo_chemical_props_path = os.path.join(
-      os.path.dirname(os.path.abspath(__file__)), 'stereo_chemical_props.txt'
-  )
+  stereo_chemical_props_path = pkg_resources.resource_filename('alphafold.common', 'stereo_chemical_props.txt')
   with open(stereo_chemical_props_path, 'rt') as f:
     stereo_chemical_props = f.read()
   lines_iter = iter(stereo_chemical_props.splitlines())

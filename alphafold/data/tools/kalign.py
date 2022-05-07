@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """A Python wrapper for Kalign."""
 import os
 import subprocess
@@ -36,7 +38,7 @@ def _to_a3m(sequences: Sequence[str]) -> str:
 class Kalign:
   """Python wrapper of the Kalign binary."""
 
-  def __init__(self, *, binary_path: str):
+  def __init__(self, *, binary_path: str, custom_tempdir: str = None):
     """Initializes the Python Kalign wrapper.
 
     Args:
@@ -46,6 +48,7 @@ class Kalign:
       RuntimeError: If Kalign binary not found within the path.
     """
     self.binary_path = binary_path
+    self.custom_tempdir = custom_tempdir
 
   def align(self, sequences: Sequence[str]) -> str:
     """Aligns the sequences and returns the alignment in A3M string.
@@ -70,7 +73,7 @@ class Kalign:
         raise ValueError('Kalign requires all sequences to be at least 6 '
                          'residues long. Got %s (%d residues).' % (s, len(s)))
 
-    with utils.tmpdir_manager() as query_tmp_dir:
+    with utils.tmpdir_manager(self.custom_tempdir) as query_tmp_dir:
       input_fasta_path = os.path.join(query_tmp_dir, 'input.fasta')
       output_a3m_path = os.path.join(query_tmp_dir, 'output.a3m')
 

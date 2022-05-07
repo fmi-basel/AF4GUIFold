@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """Library to run HHblits from Python."""
 
 import glob
@@ -35,7 +37,7 @@ class HHBlits:
                *,
                binary_path: str,
                databases: Sequence[str],
-               n_cpu: int = 4,
+               n_cpu: int = 8,
                n_iter: int = 3,
                e_value: float = 0.001,
                maxseq: int = 1_000_000,
@@ -45,7 +47,8 @@ class HHBlits:
                all_seqs: bool = False,
                alt: Optional[int] = None,
                p: int = _HHBLITS_DEFAULT_P,
-               z: int = _HHBLITS_DEFAULT_Z):
+               z: int = _HHBLITS_DEFAULT_Z,
+               custom_tempdir = None):
     """Initializes the Python HHblits wrapper.
 
     Args:
@@ -80,7 +83,7 @@ class HHBlits:
     for database_path in self.databases:
       if not glob.glob(database_path + '_*'):
         logging.error('Could not find HHBlits database %s', database_path)
-        raise ValueError(f'Could not find HHBlits database {database_path}')
+        #raise ValueError(f'Could not find HHBlits database {database_path}')
 
     self.n_cpu = n_cpu
     self.n_iter = n_iter
@@ -93,10 +96,11 @@ class HHBlits:
     self.alt = alt
     self.p = p
     self.z = z
+    self.custom_tempdir = custom_tempdir
 
   def query(self, input_fasta_path: str) -> List[Mapping[str, Any]]:
     """Queries the database using HHblits."""
-    with utils.tmpdir_manager() as query_tmp_dir:
+    with utils.tmpdir_manager(self.custom_tempdir) as query_tmp_dir:
       a3m_path = os.path.join(query_tmp_dir, 'output.a3m')
 
       db_cmd = []

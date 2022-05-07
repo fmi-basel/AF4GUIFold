@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """Model config."""
 
 import copy
@@ -21,10 +24,15 @@ NUM_RES = shape_placeholders.NUM_RES
 NUM_MSA_SEQ = shape_placeholders.NUM_MSA_SEQ
 NUM_EXTRA_SEQ = shape_placeholders.NUM_EXTRA_SEQ
 NUM_TEMPLATES = shape_placeholders.NUM_TEMPLATES
+#Added to allow increasing of recycles
+NUM_RECYCLE = 3
 
 
-def model_config(name: str) -> ml_collections.ConfigDict:
+def model_config(name: str, num_recycle: int) -> ml_collections.ConfigDict:
   """Get the ConfigDict of a CASP14 model."""
+  #Added to allow increasing of recycles
+  global NUM_RECYCLE
+  NUM_RECYCLE = num_recycle
 
   if 'multimer' in name:
     return CONFIG_MULTIMER
@@ -131,7 +139,7 @@ CONFIG = ml_collections.ConfigDict({
             },
             'max_extra_msa': 1024,
             'msa_cluster_features': True,
-            'num_recycle': 3,
+            'num_recycle': NUM_RECYCLE,
             'reduce_msa_clusters_by_max_templates': False,
             'resample_msa_in_recycling': True,
             'template_features': [
@@ -426,7 +434,7 @@ CONFIG = ml_collections.ConfigDict({
                 'weight': 2.0
             },
         },
-        'num_recycle': 3,
+        'num_recycle': NUM_RECYCLE,
         'resample_msa_in_recycling': True
     },
 })
@@ -651,7 +659,7 @@ CONFIG_MULTIMER = ml_collections.ConfigDict({
             }
         },
         'num_ensemble_eval': 1,
-        'num_recycle': 3,
+        'num_recycle': NUM_RECYCLE,
         'resample_msa_in_recycling': True
     }
 })

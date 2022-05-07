@@ -1,6 +1,10 @@
 ![header](imgs/header.jpg)
 
-# AlphaFold
+# AF4GUIFold
+
+This branch is a modified version of AlphaFold v2.2.0 for GUIFold. See <https://github.com/fmi-basel/GUIFold> for further information.
+
+# Original AlphaFold README
 
 This package provides an implementation of the inference pipeline of AlphaFold
 v2.0. This is a completely new model that was entered in CASP14 and published in

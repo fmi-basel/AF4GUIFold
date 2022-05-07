@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """A Python wrapper for hmmbuild - construct HMM profiles from MSA."""
 
 import os
@@ -29,7 +31,8 @@ class Hmmbuild(object):
   def __init__(self,
                *,
                binary_path: str,
-               singlemx: bool = False):
+               singlemx: bool = False,
+               custom_tempdir = None):
     """Initializes the Python hmmbuild wrapper.
 
     Args:
@@ -42,6 +45,7 @@ class Hmmbuild(object):
     """
     self.binary_path = binary_path
     self.singlemx = singlemx
+    self.custom_tempdir = custom_tempdir
 
   def build_profile_from_sto(self, sto: str, model_construction='fast') -> str:
     """Builds a HHM for the aligned sequences given as an A3M string.
@@ -98,7 +102,7 @@ class Hmmbuild(object):
       raise ValueError(f'Invalid model_construction {model_construction} - only'
                        'hand and fast supported.')
 
-    with utils.tmpdir_manager() as query_tmp_dir:
+    with utils.tmpdir_manager(self.custom_tempdir) as query_tmp_dir:
       input_query = os.path.join(query_tmp_dir, 'query.msa')
       output_hmm_path = os.path.join(query_tmp_dir, 'output.hmm')
 

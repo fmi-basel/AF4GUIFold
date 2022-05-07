@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """Library to run HHsearch from Python."""
 
 import glob
@@ -32,8 +34,10 @@ class HHSearch:
   def __init__(self,
                *,
                binary_path: str,
+               hhalign_binary_path: str,
                databases: Sequence[str],
-               maxseq: int = 1_000_000):
+               maxseq: int = 1_000_000,
+               custom_tempdir = None):
     """Initializes the Python HHsearch wrapper.
 
     Args:
@@ -48,13 +52,15 @@ class HHSearch:
       RuntimeError: If HHsearch binary not found within the path.
     """
     self.binary_path = binary_path
+    self.hhalign_binary_path = hhalign_binary_path
     self.databases = databases
     self.maxseq = maxseq
+    self.custom_tempdir = custom_tempdir
 
     for database_path in self.databases:
       if not glob.glob(database_path + '_*'):
         logging.error('Could not find HHsearch database %s', database_path)
-        raise ValueError(f'Could not find HHsearch database {database_path}')
+        #raise ValueError(f'Could not find HHsearch database {database_path}')
 
   @property
   def output_format(self) -> str:
@@ -66,7 +72,7 @@ class HHSearch:
 
   def query(self, a3m: str) -> str:
     """Queries the database using HHsearch using a given a3m."""
-    with utils.tmpdir_manager() as query_tmp_dir:
+    with utils.tmpdir_manager(self.custom_tempdir) as query_tmp_dir:
       input_path = os.path.join(query_tmp_dir, 'query.a3m')
       hhr_path = os.path.join(query_tmp_dir, 'output.hhr')
       with open(input_path, 'w') as f:

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """A Python wrapper for hmmsearch - search profile against a sequence db."""
 
 import os
@@ -32,8 +34,10 @@ class Hmmsearch(object):
                *,
                binary_path: str,
                hmmbuild_binary_path: str,
+               hhalign_binary_path: str,
                database_path: str,
-               flags: Optional[Sequence[str]] = None):
+               flags: Optional[Sequence[str]] = None,
+               custom_tempdir = None):
     """Initializes the Python hmmsearch wrapper.
 
     Args:
@@ -47,8 +51,10 @@ class Hmmsearch(object):
       RuntimeError: If hmmsearch binary not found within the path.
     """
     self.binary_path = binary_path
+    self.hhalign_binary_path = hhalign_binary_path
     self.hmmbuild_runner = hmmbuild.Hmmbuild(binary_path=hmmbuild_binary_path)
     self.database_path = database_path
+    self.custom_tempdir = custom_tempdir
     if flags is None:
       # Default hmmsearch run settings.
       flags = ['--F1', '0.1',
@@ -62,7 +68,7 @@ class Hmmsearch(object):
 
     if not os.path.exists(self.database_path):
       logging.error('Could not find hmmsearch database %s', database_path)
-      raise ValueError(f'Could not find hmmsearch database {database_path}')
+      #raise ValueError(f'Could not find hmmsearch database {database_path}')
 
   @property
   def output_format(self) -> str:
@@ -80,7 +86,7 @@ class Hmmsearch(object):
 
   def query_with_hmm(self, hmm: str) -> str:
     """Queries the database using hmmsearch using a given hmm."""
-    with utils.tmpdir_manager() as query_tmp_dir:
+    with utils.tmpdir_manager(self.custom_tempdir) as query_tmp_dir:
       hmm_input_path = os.path.join(query_tmp_dir, 'query.hmm')
       out_path = os.path.join(query_tmp_dir, 'output.sto')
       with open(hmm_input_path, 'w') as f:

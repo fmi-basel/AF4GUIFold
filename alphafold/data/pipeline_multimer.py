@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 """Functions for building the features for the AlphaFold multimer model."""
 
 import collections
@@ -62,8 +64,12 @@ def _make_chain_id_map(*,
 
 
 @contextlib.contextmanager
-def temp_fasta_file(fasta_str: str):
-  with tempfile.NamedTemporaryFile('w', suffix='.fasta') as fasta_file:
+def temp_fasta_file(fasta_str: str, custom_tempdir: str):
+  if custom_tempdir is None:
+      dir = "/tmp"
+  else:
+      dir = custom_tempdir
+  with tempfile.NamedTemporaryFile('w', suffix='.fasta', dir=dir) as fasta_file:
     fasta_file.write(fasta_str)
     fasta_file.seek(0)
     yield fasta_file.name
@@ -175,7 +181,8 @@ class DataPipeline:
                jackhmmer_binary_path: str,
                uniprot_database_path: str,
                max_uniprot_hits: int = 50000,
-               use_precomputed_msas: bool = False):
+               use_precomputed_msas: bool = False,
+               custom_tempdir: str = None):
     """Initializes the data pipeline.
 
     Args:
@@ -193,6 +200,7 @@ class DataPipeline:
         database_path=uniprot_database_path)
     self._max_uniprot_hits = max_uniprot_hits
     self.use_precomputed_msas = use_precomputed_msas
+    self.custom_tempdir = custom_tempdir
 
   def _process_single_chain(
       self,
@@ -200,18 +208,24 @@ class DataPipeline:
       sequence: str,
       description: str,
       msa_output_dir: str,
-      is_homomer_or_monomer: bool) -> pipeline.FeatureDict:
+      is_homomer_or_monomer: bool,
+      no_msa: bool,
+      no_template: bool,
+      custom_template: str) -> pipeline.FeatureDict:
     """Runs the monomer pipeline on a single chain."""
     chain_fasta_str = f'>chain_{chain_id}\n{sequence}\n'
     chain_msa_output_dir = os.path.join(msa_output_dir, chain_id)
     if not os.path.exists(chain_msa_output_dir):
       os.makedirs(chain_msa_output_dir)
-    with temp_fasta_file(chain_fasta_str) as chain_fasta_path:
+    with temp_fasta_file(chain_fasta_str, self.custom_tempdir) as chain_fasta_path:
       logging.info('Running monomer pipeline on chain %s: %s',
                    chain_id, description)
       chain_features = self._monomer_data_pipeline.process(
           input_fasta_path=chain_fasta_path,
-          msa_output_dir=chain_msa_output_dir)
+          msa_output_dir=chain_msa_output_dir,
+          no_msa=no_msa,
+          no_template=no_template,
+          custom_template=custom_template)
 
       # We only construct the pairing features if there are 2 or more unique
       # sequences.
@@ -224,9 +238,17 @@ class DataPipeline:
   def _all_seq_msa_features(self, input_fasta_path, msa_output_dir):
     """Get MSA features for unclustered uniprot, for pairing."""
     out_path = os.path.join(msa_output_dir, 'uniprot_hits.sto')
-    result = pipeline.run_msa_tool(
-        self._uniprot_msa_runner, input_fasta_path, out_path, 'sto',
-        self.use_precomputed_msas)
+    if not os.path.exists(out_path):
+        result = pipeline.run_msa_tool(
+            self._uniprot_msa_runner, input_fasta_path, out_path, 'sto',
+            self.use_precomputed_msas)
+        with open(out_path, 'w') as f:
+            f.write(result['sto'])
+    else:
+        with open(out_path, 'r') as f:
+            sto = f.read()
+        result = dict(sto=sto)
+
     msa = parsers.parse_stockholm(result['sto'])
     msa = msa.truncate(max_seqs=self._max_uniprot_hits)
     all_seq_features = pipeline.make_msa_features([msa])
@@ -239,7 +261,10 @@ class DataPipeline:
 
   def process(self,
               input_fasta_path: str,
-              msa_output_dir: str) -> pipeline.FeatureDict:
+              msa_output_dir: str,
+              no_msa,
+              no_template,
+              custom_template) -> pipeline.FeatureDict:
     """Runs alignment tools on the input sequences and creates features."""
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
@@ -256,7 +281,7 @@ class DataPipeline:
     all_chain_features = {}
     sequence_features = {}
     is_homomer_or_monomer = len(set(input_seqs)) == 1
-    for chain_id, fasta_chain in chain_id_map.items():
+    for i, (chain_id, fasta_chain) in enumerate(chain_id_map.items()):
       if fasta_chain.sequence in sequence_features:
         all_chain_features[chain_id] = copy.deepcopy(
             sequence_features[fasta_chain.sequence])
@@ -266,7 +291,10 @@ class DataPipeline:
           sequence=fasta_chain.sequence,
           description=fasta_chain.description,
           msa_output_dir=msa_output_dir,
-          is_homomer_or_monomer=is_homomer_or_monomer)
+          is_homomer_or_monomer=is_homomer_or_monomer,
+          no_msa=no_msa[i],
+          no_template=no_template[i],
+          custom_template=custom_template[i])
 
       chain_features = convert_monomer_features(chain_features,
                                                 chain_id=chain_id)
