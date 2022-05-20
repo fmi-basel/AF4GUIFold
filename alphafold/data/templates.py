@@ -720,13 +720,15 @@ def _process_single_hit(
         release_dates=release_dates,
         release_date_cutoff=max_template_date)
   except PrefilterError as e:
-    msg = f'hit {hit_pdb_code}_{hit_chain_id} did not pass prefilter: {str(e)}'
-    logging.info(msg)
-    if strict_error_check and isinstance(e, (DateError, DuplicateError)):
+    if strict_error_check or isinstance(e, (DateError, AlignRatioError, LengthError)): # and isinstance(e, (DateError, DuplicateError)):
       # In strict mode we treat some prefilter cases as errors.
+      logging.info(msg)
+      msg = f'hit {hit_pdb_code}_{hit_chain_id} did not pass prefilter because strict_error_check is activated: {str(e)}'
       return SingleHitResult(features=None, error=msg, warning=None)
 
-    return SingleHitResult(features=None, error=None, warning=None)
+
+    #Outcommented since there would be empty result even if strict_error_check is False
+    #return SingleHitResult(features=None, error=None, warning=None)
 
   mapping = _build_query_to_hit_index_mapping(
       hit.query, hit.hit_sequence, hit.indices_hit, hit.indices_query,

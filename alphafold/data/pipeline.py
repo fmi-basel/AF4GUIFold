@@ -181,7 +181,7 @@ class DataPipeline:
           no_msa,
           no_template,
           custom_template):
-    logging.info(f"Do not use MSA: {no_msa}\nDo not use Templates: {no_template}")
+    logging.info(f"No MSA: {no_msa}; No Templates: {no_template}; Custom Template {custom_template}")
     if isinstance(no_msa, list):
         if len(no_msa) > 1:
             raise ValueError("Too many items at this stage")
