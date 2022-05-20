@@ -722,8 +722,8 @@ def _process_single_hit(
   except PrefilterError as e:
     if strict_error_check or isinstance(e, (DateError, AlignRatioError, LengthError)): # and isinstance(e, (DateError, DuplicateError)):
       # In strict mode we treat some prefilter cases as errors.
-      logging.info(msg)
       msg = f'hit {hit_pdb_code}_{hit_chain_id} did not pass prefilter because strict_error_check is activated: {str(e)}'
+      logging.info(msg)
       return SingleHitResult(features=None, error=msg, warning=None)
 
 
