@@ -364,7 +364,8 @@ def main(argv):
     template_searcher = hhsearch.HHSearch(
         binary_path=FLAGS.hhsearch_binary_path,
         hhalign_binary_path=FLAGS.hhalign_binary_path,
-        databases=[FLAGS.pdb70_database_path])
+        databases=[FLAGS.pdb70_database_path],
+        custom_tempdir=FLAGS.custom_tempdir)
     template_featurizer = templates.HhsearchHitFeaturizer(
         mmcif_dir=FLAGS.template_mmcif_dir,
         max_template_date=FLAGS.max_template_date,

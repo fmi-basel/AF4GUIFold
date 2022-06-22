@@ -52,7 +52,7 @@ class Hmmsearch(object):
     """
     self.binary_path = binary_path
     self.hhalign_binary_path = hhalign_binary_path
-    self.hmmbuild_runner = hmmbuild.Hmmbuild(binary_path=hmmbuild_binary_path)
+    self.hmmbuild_runner = hmmbuild.Hmmbuild(binary_path=hmmbuild_binary_path, custom_tempdir=custom_tempdir)
     self.database_path = database_path
     self.custom_tempdir = custom_tempdir
     if flags is None:
