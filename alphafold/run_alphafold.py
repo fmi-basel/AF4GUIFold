@@ -143,7 +143,11 @@ flags.DEFINE_list('custom_template_list', None, 'Optional. If a custom template 
                                                 'in the same order as sequences are given in the fasta file.')
 flags.DEFINE_string('custom_tempdir', None, 'Define a custom tempdir other than /tmp')
 flags.DEFINE_integer('num_recycle', 3, 'Define maximum number of model recycles.')
-flags.DEFINE_bool('only_msa', False, 'Stop after MSA pipeline. Useful for splitting up the job on CPU and GPU resources')
+flags.DEFINE_bool('only_features', False, 'Stop after Feature pipeline. Useful for splitting up the job into CPU and GPU resources.')
+flags.DEFINE_bool('continue_from_features', False, 'Continue from features.pkl file.'
+                                                   ' Useful for splitting up the job into CPU and GPU resources.')
+flags.DEFINE_string('scratch_dir', None, 'Directory to temporarily store database index (for use with MMSeqs2),'
+                                          ' e.g. RAM or local SSD.')
 
 FLAGS = flags.FLAGS
 
@@ -202,7 +206,13 @@ def predict_structure(
     pickle.dump(feature_dict, f, protocol=4)
 
   #Stop here if only_msa flag is set
-  if not FLAGS.only_msa:
+  if not FLAGS.only_features:
+      if FLAGS.continue_from_features:
+          if not os.path.exists(features_output_path):
+              raise("Continue_from_features requested but no feature pickle file found in this directory.")
+          with open(features_output_path, 'r') as f:
+            feature_dict_list = pickle.load(f)
+
       unrelaxed_pdbs = {}
       relaxed_pdbs = {}
       ranking_confidences = {}

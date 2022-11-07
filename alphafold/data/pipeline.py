@@ -100,8 +100,9 @@ def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
                  max_sto_sequences: Optional[int] = None
                  ) -> Mapping[str, Any]:
     """Runs an MSA tool, checking if output already exists first."""
-    if not use_precomputed_msas or not os.path.exists(msa_out_path):
-        logging.info(f"No MSA found in {msa_out_path}")
+    msa_out_path_a3m = msa_out_path.replace(".sto", ".a3m")
+    if not use_precomputed_msas or (not os.path.exists(msa_out_path) and not os.path.exists(msa_out_path_a3m)):
+        logging.info(f"No MSA found in {msa_out_path} or {msa_out_path_a3m}")
         if msa_format == 'sto' and max_sto_sequences is not None:
             result = msa_runner.query(input_fasta_path, max_sto_sequences)[0]  # pytype: disable=wrong-arg-count
         else:
@@ -109,6 +110,9 @@ def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
         with open(msa_out_path, 'w') as f:
             f.write(result[msa_format])
     else:
+        if os.path.exists(msa_out_path_a3m) and msa_format == 'sto':
+            msa_format = 'a3m'
+            msa_out_path = msa_out_path_a3m
         logging.warning('Reading MSA from file %s', msa_out_path)
         if msa_format == 'sto' and max_sto_sequences is not None:
             precomputed_msa = parsers.truncate_stockholm_msa(
@@ -218,16 +222,7 @@ class DataPipeline:
     num_res = len(input_sequence)
 
     msa_jobs = []
-    #uniref90 msa also needed for PDB hit search
-    if not no_msa or not no_template:
-        uniref90_out_path = os.path.join(msa_output_dir, 'uniref90_hits.sto')
-        msa_jobs.append((
-            self.jackhmmer_uniref90_runner,
-            input_fasta_path,
-            uniref90_out_path,
-            'sto',
-            self.use_precomputed_msas,
-            self.uniref_max_hits))
+
 
     if not no_msa:
         mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
@@ -258,22 +253,42 @@ class DataPipeline:
                 'a3m',
                 self.use_precomputed_msas))
 
-    logging.debug("Job list")
-    logging.debug(msa_jobs)
+    #uniref90 msa also needed for PDB hit search
+    if not no_msa or not no_template:
+        uniref90_out_path = os.path.join(msa_output_dir, 'uniref90_hits.sto')
+        msa_jobs.append((
+            self.jackhmmer_uniref90_runner,
+            input_fasta_path,
+            uniref90_out_path,
+            'sto',
+            self.use_precomputed_msas,
+            self.uniref_max_hits))
+
+    logging.info("Job list")
+    logging.info(msa_jobs)
+    if len(msa_jobs) > 2:
+        num_cpu = 2
+    else:
+        num_cpu = len(msa_jobs)
     if not len(msa_jobs) == 0:
-        with closing(Pool(len(msa_jobs))) as pool:
+        with closing(Pool(num_cpu)) as pool:
             results = pool.starmap_async(run_msa_tool, msa_jobs)
             msa_jobs_results = results.get()
 
     if not no_msa or not no_template:
         jackhmmer_uniref90_result = msa_jobs_results[0]
-        uniref90_msa = parsers.parse_stockholm(jackhmmer_uniref90_result['sto'])
-        uniref90_msa = uniref90_msa.truncate(max_seqs=self.uniref_max_hits)
+        if not 'a3m' in jackhmmer_uniref90_result:
+            uniref90_msa = parsers.parse_stockholm(jackhmmer_uniref90_result['sto'])
+            uniref90_msa = uniref90_msa.truncate(max_seqs=self.uniref_max_hits)
+            msa_for_templates = jackhmmer_uniref90_result['sto']
+            msa_for_templates = parsers.deduplicate_stockholm_msa(msa_for_templates)
+            msa_for_templates = parsers.remove_empty_columns_from_stockholm_msa(
+                msa_for_templates)
+        else:
+            uniref90_msa = parsers.parse_a3m(jackhmmer_uniref90_result['a3m'])
+            msa_for_templates = jackhmmer_uniref90_result
 
-        msa_for_templates = jackhmmer_uniref90_result['sto']
-        msa_for_templates = parsers.deduplicate_stockholm_msa(msa_for_templates)
-        msa_for_templates = parsers.remove_empty_columns_from_stockholm_msa(
-              msa_for_templates)
+
 
     if not no_msa:
         jackhmmer_mgnify_result = msa_jobs_results[1]
@@ -296,7 +311,10 @@ class DataPipeline:
             logging.info(custom_template)
             template_sequence = self.get_template_sequence(custom_template)
             template_searcher = hhalign.HHAlign(self.template_searcher.hhalign_binary_path)
-            uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(msa_for_templates)
+            if not 'a3m' in msa_for_templates:
+                uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(msa_for_templates)
+            else:
+                uniref90_msa_as_a3m = msa_for_templates['a3m']
             pdb_templates_result = template_searcher.query(template_sequence, uniref90_msa_as_a3m)
 
             self.template_featurizer_initial = deepcopy(self.template_featurizer)
@@ -319,7 +337,9 @@ class DataPipeline:
         pdb_hits_out_path = os.path.join(
             msa_output_dir, f'pdb_hits.{self.template_searcher.output_format}')
         if not os.path.exists(pdb_hits_out_path):
-            if self.template_searcher.input_format == 'sto':
+            if 'a3m' in msa_for_templates:
+                pdb_templates_result = self.template_searcher.query(msa_for_templates['a3m'], format='a3m')
+            elif self.template_searcher.input_format == 'sto' and not 'a3m' in msa_for_templates:
                 pdb_templates_result = self.template_searcher.query(msa_for_templates)
             elif self.template_searcher.input_format == 'a3m':
                 uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(msa_for_templates)
