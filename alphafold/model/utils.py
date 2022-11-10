@@ -34,7 +34,7 @@ def final_init(config):
 
 def batched_gather(params, indices, axis=0, batch_dims=0):
   """Implements a JAX equivalent of `tf.gather` with `axis` and `batch_dims`."""
-  take_fn = lambda p, i: jnp.take(p, i, axis=axis)
+  take_fn = lambda p, i: jnp.take(p, i, axis=axis, mode='clip')
   for _ in range(batch_dims):
     take_fn = jax.vmap(take_fn)
   return take_fn(params, indices)
@@ -54,7 +54,7 @@ def mask_mean(mask, value, axis=None, drop_mask_channel=False, eps=1e-10):
     axis = [axis]
   elif axis is None:
     axis = list(range(len(mask_shape)))
-  assert isinstance(axis, collections.Iterable), (
+  assert isinstance(axis, collections.abc.Iterable), (
       'axis needs to be either an iterable, integer or "None"')
 
   broadcast_factor = 1.
