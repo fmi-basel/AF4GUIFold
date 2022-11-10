@@ -225,16 +225,6 @@ class DataPipeline:
 
 
     if not no_msa:
-        mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
-        msa_jobs.append(
-            (self.jackhmmer_mgnify_runner,
-            input_fasta_path,
-            mgnify_out_path,
-            'sto',
-            self.use_precomputed_msas,
-            self.mgnify_max_hits))
-
-
         if self._use_small_bfd:
             bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
             msa_jobs.append((
@@ -252,6 +242,14 @@ class DataPipeline:
                 bfd_out_path,
                 'a3m',
                 self.use_precomputed_msas))
+
+        mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
+        msa_jobs.append((self.jackhmmer_mgnify_runner,
+        input_fasta_path,
+        mgnify_out_path,
+        'sto',
+        self.use_precomputed_msas,
+        self.mgnify_max_hits))
 
     #uniref90 msa also needed for PDB hit search
     if not no_msa or not no_template:
@@ -275,8 +273,23 @@ class DataPipeline:
             results = pool.starmap_async(run_msa_tool, msa_jobs)
             msa_jobs_results = results.get()
 
+    if not no_msa:
+        if self._use_small_bfd:
+            jackhmmer_small_bfd_result = msa_jobs_results[0]
+            bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
+        else:
+            hhblits_bfd_uniclust_result = msa_jobs_results[0]
+            bfd_msa = parsers.parse_a3m(hhblits_bfd_uniclust_result['a3m'])
+
+        jackhmmer_mgnify_result = msa_jobs_results[1]
+        mgnify_msa = parsers.parse_stockholm(jackhmmer_mgnify_result['sto'])
+        mgnify_msa = mgnify_msa.truncate(max_seqs=self.mgnify_max_hits)
+
     if not no_msa or not no_template:
-        jackhmmer_uniref90_result = msa_jobs_results[0]
+        if len(msa_jobs) == 1:
+            jackhmmer_uniref90_result = msa_jobs_results[0]
+        else:
+            jackhmmer_uniref90_result = msa_jobs_results[-1]
         if not 'a3m' in jackhmmer_uniref90_result:
             uniref90_msa = parsers.parse_stockholm(jackhmmer_uniref90_result['sto'])
             uniref90_msa = uniref90_msa.truncate(max_seqs=self.uniref_max_hits)
@@ -287,21 +300,6 @@ class DataPipeline:
         else:
             uniref90_msa = parsers.parse_a3m(jackhmmer_uniref90_result['a3m'])
             msa_for_templates = jackhmmer_uniref90_result
-
-
-
-    if not no_msa:
-        jackhmmer_mgnify_result = msa_jobs_results[1]
-        mgnify_msa = parsers.parse_stockholm(jackhmmer_mgnify_result['sto'])
-        mgnify_msa = mgnify_msa.truncate(max_seqs=self.mgnify_max_hits)
-
-        if self._use_small_bfd:
-            jackhmmer_small_bfd_result = msa_jobs_results[2]
-            bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
-        else:
-            hhblits_bfd_uniclust_result = msa_jobs_results[2]
-            bfd_msa = parsers.parse_a3m(hhblits_bfd_uniclust_result['a3m'])
-
 
 
     #Refactored to implement use of a single custom template

@@ -190,28 +190,30 @@ def predict_structure(
   if not os.path.exists(msa_output_dir):
     os.makedirs(msa_output_dir)
 
-  # Get features.
-  t_0 = time.time()
-  feature_dict = data_pipeline.process(
-        input_fasta_path=fasta_path,
-        msa_output_dir=msa_output_dir,
-        no_msa=no_msa_list,
-        no_template=no_template_list,
-        custom_template=custom_template_list)
-  timings['features'] = time.time() - t_0
-
-  # Write out features as a pickled dictionary.
   features_output_path = os.path.join(output_dir, 'features.pkl')
-  with open(features_output_path, 'wb') as f:
-    pickle.dump(feature_dict, f, protocol=4)
+  # Get features.
+  if not FLAGS.continue_from_features:
+      t_0 = time.time()
+      feature_dict = data_pipeline.process(
+            input_fasta_path=fasta_path,
+            msa_output_dir=msa_output_dir,
+            no_msa=no_msa_list,
+            no_template=no_template_list,
+            custom_template=custom_template_list)
+      timings['features'] = time.time() - t_0
+
+      # Write out features as a pickled dictionary.
+
+      with open(features_output_path, 'wb') as f:
+        pickle.dump(feature_dict, f, protocol=4)
 
   #Stop here if only_msa flag is set
   if not FLAGS.only_features:
       if FLAGS.continue_from_features:
           if not os.path.exists(features_output_path):
               raise("Continue_from_features requested but no feature pickle file found in this directory.")
-          with open(features_output_path, 'r') as f:
-            feature_dict_list = pickle.load(f)
+          with open(features_output_path, 'rb') as f:
+            feature_dict = pickle.load(f)
 
       unrelaxed_pdbs = {}
       relaxed_pdbs = {}
