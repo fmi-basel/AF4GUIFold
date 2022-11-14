@@ -251,7 +251,7 @@ class DataPipeline:
         self.use_precomputed_msas,
         self.mgnify_max_hits))
 
-    #uniref90 msa also needed for PDB hit search
+    #uniref90 msa also needed for PDB hit search and custom template
     if not no_msa or not no_template:
         uniref90_out_path = os.path.join(msa_output_dir, 'uniref90_hits.sto')
         msa_jobs.append((
