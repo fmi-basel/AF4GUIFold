@@ -78,10 +78,13 @@ class Hmmsearch(object):
   def input_format(self) -> str:
     return 'sto'
 
-  def query(self, msa_sto: str) -> str:
+  def query(self, msa: str, format: str = 'sto') -> str:
     """Queries the database using hmmsearch using a given stockholm msa."""
-    hmm = self.hmmbuild_runner.build_profile_from_sto(msa_sto,
-                                                      model_construction='hand')
+    if format == 'a3m':
+        hmm = self.hmmbuild_runner.build_profile_from_a3m(msa)
+    else:
+        hmm = self.hmmbuild_runner.build_profile_from_sto(msa,
+                                                          model_construction='hand')
     return self.query_with_hmm(hmm)
 
   def query_with_hmm(self, hmm: str) -> str:

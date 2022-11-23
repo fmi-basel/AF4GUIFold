@@ -29,6 +29,7 @@ from alphafold.data.tools import hhalign
 from alphafold.data.tools import hhsearch
 from alphafold.data.tools import hmmsearch
 from alphafold.data.tools import jackhmmer
+from alphafold.data.tools import mmseqs
 from alphafold.data.templates import TemplateSearchResult
 from alphafold.data.parsers import Msa
 from Bio.PDB import MMCIFParser
@@ -37,6 +38,7 @@ import pickle
 from copy import deepcopy
 from contextlib import closing
 from multiprocessing import Pool
+import signal
 
 # Internal import (7716).
 
@@ -130,20 +132,25 @@ class DataPipeline:
   def __init__(self,
                jackhmmer_binary_path: str,
                hhblits_binary_path: str,
+               mmseqs_binary_path: str,
                uniref90_database_path: str,
                mgnify_database_path: str,
                bfd_database_path: Optional[str],
                uniclust30_database_path: Optional[str],
                small_bfd_database_path: Optional[str],
+               uniref30_database_path: str,
+               colabfold_envdb_database_path: str,
                template_searcher: TemplateSearcher,
                template_featurizer: templates.TemplateHitFeaturizer,
                use_small_bfd: bool,
+               use_mmseqs: bool,
                mgnify_max_hits: int = 501,
                uniref_max_hits: int = 10000,
                use_precomputed_msas: bool = False,
                custom_tempdir: str = None):
     """Initializes the data pipeline."""
     self._use_small_bfd = use_small_bfd
+    self._use_mmseqs = use_mmseqs
     self.jackhmmer_uniref90_runner = jackhmmer.Jackhmmer(
         binary_path=jackhmmer_binary_path,
         database_path=uniref90_database_path,
@@ -161,6 +168,10 @@ class DataPipeline:
     self.jackhmmer_mgnify_runner = jackhmmer.Jackhmmer(
         binary_path=jackhmmer_binary_path,
         database_path=mgnify_database_path,
+        custom_tempdir=custom_tempdir)
+    self.mmseqs_runner = mmseqs.MMSeqs(
+        binary_path=mmseqs_binary_path,
+        database_path=[uniref30_database_path, colabfold_envdb_database_path],
         custom_tempdir=custom_tempdir)
     self.template_searcher = template_searcher
     self.template_featurizer = template_featurizer
@@ -182,6 +193,9 @@ class DataPipeline:
     custom_template_sequence = {'name': name,
                                 'sequence': sequence}
     return custom_template_sequence
+
+  def init_worker(self):
+      signal.signal(signal.SIGINT, signal.SIG_IGN)
 
   def process(self,
           input_fasta_path,
@@ -225,31 +239,40 @@ class DataPipeline:
 
 
     if not no_msa:
-        if self._use_small_bfd:
-            bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
-            msa_jobs.append((
-                self.jackhmmer_small_bfd_runner,
-                input_fasta_path,
-                bfd_out_path,
-                'sto',
-                self.use_precomputed_msas))
-
+        if self._use_mmseqs:
+            uniref30_colabfold_envdb_out_path = os.path.join(msa_output_dir, 'uniref30_colabfold_envdb.a3m')
+            msa_jobs.append(
+                (self.mmseqs_runner,
+                 input_fasta_path,
+                 uniref30_colabfold_envdb_out_path,
+                 'a3m',
+                 self.use_precomputed_msas))
         else:
-            bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
-            msa_jobs.append((
-                self.hhblits_bfd_uniclust_runner,
-                input_fasta_path,
-                bfd_out_path,
-                'a3m',
-                self.use_precomputed_msas))
+            if self._use_small_bfd:
+                bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
+                msa_jobs.append((
+                    self.jackhmmer_small_bfd_runner,
+                    input_fasta_path,
+                    bfd_out_path,
+                    'sto',
+                    self.use_precomputed_msas))
 
-        mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
-        msa_jobs.append((self.jackhmmer_mgnify_runner,
-        input_fasta_path,
-        mgnify_out_path,
-        'sto',
-        self.use_precomputed_msas,
-        self.mgnify_max_hits))
+            else:
+                bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
+                msa_jobs.append((
+                    self.hhblits_bfd_uniclust_runner,
+                    input_fasta_path,
+                    bfd_out_path,
+                    'a3m',
+                    self.use_precomputed_msas))
+
+            mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
+            msa_jobs.append((self.jackhmmer_mgnify_runner,
+            input_fasta_path,
+            mgnify_out_path,
+            'sto',
+            self.use_precomputed_msas,
+            self.mgnify_max_hits))
 
     #uniref90 msa also needed for PDB hit search and custom template
     if not no_msa or not no_template:
@@ -269,21 +292,29 @@ class DataPipeline:
     else:
         num_cpu = len(msa_jobs)
     if not len(msa_jobs) == 0:
-        with closing(Pool(num_cpu)) as pool:
-            results = pool.starmap_async(run_msa_tool, msa_jobs)
-            msa_jobs_results = results.get()
+        with closing(Pool(num_cpu, self.init_worker)) as pool:
+            try:
+                results = pool.starmap_async(run_msa_tool, msa_jobs)
+                msa_jobs_results = results.get()
+            except KeyboardInterrupt:
+                pool.terminate()
+                pool.join()
 
     if not no_msa:
-        if self._use_small_bfd:
-            jackhmmer_small_bfd_result = msa_jobs_results[0]
-            bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
+        if self._use_mmseqs:
+            mmseqs_uniref30_colabfold_envdb_result = msa_jobs_results[0]
+            uniref30_colabfold_envdb_msa = parsers.parse_a3m(mmseqs_uniref30_colabfold_envdb_result['a3m'])
         else:
-            hhblits_bfd_uniclust_result = msa_jobs_results[0]
-            bfd_msa = parsers.parse_a3m(hhblits_bfd_uniclust_result['a3m'])
-
-        jackhmmer_mgnify_result = msa_jobs_results[1]
-        mgnify_msa = parsers.parse_stockholm(jackhmmer_mgnify_result['sto'])
-        mgnify_msa = mgnify_msa.truncate(max_seqs=self.mgnify_max_hits)
+            if self._use_small_bfd:
+                jackhmmer_small_bfd_result = msa_jobs_results[0]
+                bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
+            else:
+                hhblits_bfd_uniclust_result = msa_jobs_results[0]
+                bfd_msa = parsers.parse_a3m(hhblits_bfd_uniclust_result['a3m'])
+    
+            jackhmmer_mgnify_result = msa_jobs_results[1]
+            mgnify_msa = parsers.parse_stockholm(jackhmmer_mgnify_result['sto'])
+            mgnify_msa = mgnify_msa.truncate(max_seqs=self.mgnify_max_hits)
 
     if not no_msa or not no_template:
         if len(msa_jobs) == 1:
@@ -397,14 +428,20 @@ class DataPipeline:
         logging.info("Not using MSA")
     else:
         logging.info("Using MSA")
-        msa_features = make_msa_features((uniref90_msa, bfd_msa, mgnify_msa))
+        if self._use_mmseqs:
+            msa_features = make_msa_features((uniref90_msa, uniref30_colabfold_envdb_msa))
+        else:
+            msa_features = make_msa_features((uniref90_msa, bfd_msa, mgnify_msa))
 
     if not no_msa:
         logging.info('Uniref90 MSA size: %d sequences.', len(uniref90_msa))
-        logging.info('BFD MSA size: %d sequences.', len(bfd_msa))
-        logging.info('MGnify MSA size: %d sequences.', len(mgnify_msa))
-        logging.info('Final (deduplicated) MSA size: %d sequences.',
-                     msa_features['num_alignments'][0])
+        if self._use_mmseqs:
+            logging.info('Uniref30 and colabfold_envdb MSA size: %d sequences.', len(uniref30_colabfold_envdb_msa))
+        else:
+            logging.info('BFD MSA size: %d sequences.', len(bfd_msa))
+            logging.info('MGnify MSA size: %d sequences.', len(mgnify_msa))
+            logging.info('Final (deduplicated) MSA size: %d sequences.',
+                         msa_features['num_alignments'][0])
     else:
         logging.info('Final (deduplicated) MSA size: %d empty sequence (as requested).',
                      msa_features['num_alignments'][0])

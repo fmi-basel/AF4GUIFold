@@ -67,10 +67,16 @@ flags.DEFINE_string('hmmbuild_binary_path', None,
                     'Path to the hmmbuild executable.')
 flags.DEFINE_string('hhalign_binary_path', None,
                     'Path to the hhalign executable.')
+flags.DEFINE_string('mmseqs_binary_path', None,
+                    'Path to the mmseqs executable.')
 flags.DEFINE_string('kalign_binary_path', None,
                     'Path to the Kalign executable.')
 flags.DEFINE_string('uniref90_database_path', None, 'Path to the Uniref90 '
                     'database for use by JackHMMER.')
+flags.DEFINE_string('uniref30_database_path', None, 'Path to the Uniref30 '
+                                                    'database for use by MMSeqs2.')
+flags.DEFINE_string('colabfold_envdb_database_path', None, 'Path to the colabfold_envdb '
+                                                    'database for use by MMSeqs2.')
 flags.DEFINE_string('mgnify_database_path', None, 'Path to the MGnify '
                     'database for use by JackHMMER.')
 flags.DEFINE_string('bfd_database_path', None, 'Path to the BFD '
@@ -93,12 +99,13 @@ flags.DEFINE_string('obsolete_pdbs_path', None, 'Path to file containing a '
                     'mapping from obsolete PDB IDs to the PDB IDs of their '
                     'replacements.')
 flags.DEFINE_enum('db_preset', 'full_dbs',
-                  ['full_dbs', 'reduced_dbs'],
+                  ['full_dbs', 'reduced_dbs', 'colabfold'],
                   'Choose preset MSA database configuration - '
                   'smaller genetic database config (reduced_dbs) or '
-                  'full genetic database config  (full_dbs)')
+                  'full genetic database config  (full_dbs) or '
+                  'colabfold database config (uniref30, colabfold_envdb) in combination with jackhmmer+mmseqs')
 flags.DEFINE_enum('model_preset', 'monomer',
-                  ['monomer', 'monomer_casp14', 'monomer_ptm', 'multimer'],
+                  ['monomer', 'monomer_casp14', 'monomer_tm', 'multimer'],
                   'Choose preset model configuration - the monomer model, '
                   'the monomer model with extra ensembling, monomer model with '
                   'pTM head, or multimer model')
@@ -146,8 +153,6 @@ flags.DEFINE_integer('num_recycle', 3, 'Define maximum number of model recycles.
 flags.DEFINE_bool('only_features', False, 'Stop after Feature pipeline. Useful for splitting up the job into CPU and GPU resources.')
 flags.DEFINE_bool('continue_from_features', False, 'Continue from features.pkl file.'
                                                    ' Useful for splitting up the job into CPU and GPU resources.')
-flags.DEFINE_string('scratch_dir', None, 'Directory to temporarily store database index (for use with MMSeqs2),'
-                                          ' e.g. RAM or local SSD.')
 
 FLAGS = flags.FLAGS
 
@@ -330,12 +335,16 @@ def main(argv):
   #Do not check for MSA tools when MSA already exists.
   run_multimer_system = 'multimer' in FLAGS.model_preset
   use_small_bfd = FLAGS.db_preset == 'reduced_dbs'
-  if not FLAGS.use_precomputed_msas:
+  use_mmseqs = FLAGS.db_preset == 'colabfold'
+  if not FLAGS.use_precomputed_msas and not FLAGS.continue_from_features:
       for tool_name in (
           'jackhmmer', 'hhblits', 'hhsearch', 'hmmsearch', 'hmmbuild', 'kalign'):
         if not FLAGS[f'{tool_name}_binary_path'].value:
           raise ValueError(f'Could not find path to the "{tool_name}" binary. Make '
                            'sure it is installed on your system.')
+        if FLAGS.db_preset == 'colabfold':
+            if not FLAGS.mmseqs_binary_path:
+                raise ValueError(f'Could not find path to mmseqs2 binary. Make sure it is installed on your system.')
       _check_flag('small_bfd_database_path', 'db_preset',
                   should_be_set=use_small_bfd)
       _check_flag('bfd_database_path', 'db_preset',
@@ -348,6 +357,10 @@ def main(argv):
                   should_be_set=run_multimer_system)
       _check_flag('uniprot_database_path', 'model_preset',
                   should_be_set=run_multimer_system)
+      _check_flag('uniref30_database_path', 'db_preset',
+                  should_be_set=use_mmseqs)
+      _check_flag('colabfold_envdb_database_path', 'db_preset',
+                  should_be_set=use_mmseqs)
 
   if FLAGS.model_preset == 'monomer_casp14':
     num_ensemble = 8
@@ -391,15 +404,19 @@ def main(argv):
   monomer_data_pipeline = pipeline.DataPipeline(
       jackhmmer_binary_path=FLAGS.jackhmmer_binary_path,
       hhblits_binary_path=FLAGS.hhblits_binary_path,
+      mmseqs_binary_path=FLAGS.mmseqs_binary_path,
       uniref90_database_path=FLAGS.uniref90_database_path,
       mgnify_database_path=FLAGS.mgnify_database_path,
       bfd_database_path=FLAGS.bfd_database_path,
       uniclust30_database_path=FLAGS.uniclust30_database_path,
       small_bfd_database_path=FLAGS.small_bfd_database_path,
+      uniref30_database_path=FLAGS.uniref30_database_path,
+      colabfold_envdb_database_path=FLAGS.colabfold_envdb_database_path,
       template_searcher=template_searcher,
       template_featurizer=template_featurizer,
       use_small_bfd=use_small_bfd,
       use_precomputed_msas=FLAGS.use_precomputed_msas,
+      use_mmseqs=use_mmseqs,
       custom_tempdir=FLAGS.custom_tempdir)
 
   if run_multimer_system:
