@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Copyright 2021 DeepMind Technologies Limited
+# Copyright 2022 Friedrich Miescher Institute for Biomedical Research
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+# Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
 
 """Full AlphaFold protein structure prediction script."""
 import json
@@ -35,6 +36,7 @@ from alphafold.common import protein
 from alphafold.common import residue_constants
 from alphafold.data import pipeline
 from alphafold.data import pipeline_multimer
+from alphafold.data import pipeline_batch
 from alphafold.data import templates
 from alphafold.data.tools import hhsearch
 from alphafold.data.tools import hmmsearch
@@ -105,7 +107,7 @@ flags.DEFINE_enum('db_preset', 'full_dbs',
                   'full genetic database config  (full_dbs) or '
                   'colabfold database config (uniref30, colabfold_envdb) in combination with jackhmmer+mmseqs')
 flags.DEFINE_enum('model_preset', 'monomer',
-                  ['monomer', 'monomer_casp14', 'monomer_tm', 'multimer'],
+                  ['monomer', 'monomer_casp14', 'monomer_ptm', 'multimer'],
                   'Choose preset model configuration - the monomer model, '
                   'the monomer model with extra ensembling, monomer model with '
                   'pTM head, or multimer model')
@@ -146,15 +148,30 @@ flags.DEFINE_list('no_template_list', False, 'Optional. If the use of templates 
                                                 'a boolean needs to be given for each sequence in the same order '
                                                 'as sequences are given in the fasta file.')
 flags.DEFINE_list('custom_template_list', None, 'Optional. If a custom template should be used for one or'
-                                                    ' more sequences, a list of file paths or None needs to be given  '
+                                                    ' more sequences, a comma-separated list of file paths or None needs to be given  '
                                                 'in the same order as sequences are given in the fasta file.')
+flags.DEFINE_list('precomputed_msas_list', None, 'Optional. Comma-separated list of paths to precomputed msas folders or None, given'
+                                                 ' in the same order as input sequences.')
 flags.DEFINE_string('custom_tempdir', None, 'Define a custom tempdir other than /tmp')
 flags.DEFINE_integer('num_recycle', 3, 'Define maximum number of model recycles.')
-flags.DEFINE_bool('only_features', False, 'Stop after Feature pipeline. Useful for splitting up the job into CPU and GPU resources.')
-flags.DEFINE_bool('continue_from_features', False, 'Continue from features.pkl file.'
-                                                   ' Useful for splitting up the job into CPU and GPU resources.')
+#flags.DEFINE_bool('only_features', False, 'Stop after Feature pipeline. Useful for splitting up the job into CPU and GPU resources.')
+#flags.DEFINE_bool('continue_from_features', False, 'Continue from features.pkl file.'
+#                                                   ' Useful for splitting up the job into CPU and GPU resources.')
+flags.DEFINE_integer('num_cpus', 1, 'Number of CPUs to use for feature generation.')
+flags.DEFINE_string('precomputed_msas_path', None, 'Path to a directory with precomputed MSAs (job_dir/msas)')
+#flags.DEFINE_boolean('batch_features', False, 'Runs the monomer feature pipeline for all sequences in the input MSA file.')
+flags.DEFINE_enum('pipeline', 'full', [
+                'full', 'only_features', 'batch_features', 'continue_from_msas', 'continue_from_features'],
+                'Choose preset pipeline configuration - '
+                'full pipeline or '
+                'stop after feature generation (only features) or '
+                'calculate MSAs and find templates for given batch of sequences, ignore monomer/multimer preset (batch features) or'
+                'continue from precalculated MSAs (continue_from_msas) or '
+                'continue from features.pkl file (continue_from_features)')
 
 FLAGS = flags.FLAGS
+
+
 
 MAX_TEMPLATE_HITS = 20
 RELAX_MAX_ITERATIONS = 0
@@ -184,7 +201,8 @@ def predict_structure(
     random_seed: int,
     no_msa_list: Optional[bool] = None,
     no_template_list: Optional[bool] = None,
-    custom_template_list: Optional[str] = None):
+    custom_template_list: Optional[str] = None,
+    precomputed_msas_list: Optional[str] = None):
   """Predicts structure using AlphaFold for the given sequence."""
   logging.info('Predicting %s', fasta_name)
   timings = {}
@@ -197,14 +215,16 @@ def predict_structure(
 
   features_output_path = os.path.join(output_dir, 'features.pkl')
   # Get features.
-  if not FLAGS.continue_from_features:
+  if not FLAGS.pipeline == 'continue_from_features':
       t_0 = time.time()
       feature_dict = data_pipeline.process(
             input_fasta_path=fasta_path,
             msa_output_dir=msa_output_dir,
             no_msa=no_msa_list,
             no_template=no_template_list,
-            custom_template=custom_template_list)
+            custom_template=custom_template_list,
+            precomputed_msas=precomputed_msas_list,
+            num_cpu=FLAGS.num_cpus)
       timings['features'] = time.time() - t_0
 
       # Write out features as a pickled dictionary.
@@ -213,8 +233,8 @@ def predict_structure(
         pickle.dump(feature_dict, f, protocol=4)
 
   #Stop here if only_msa flag is set
-  if not FLAGS.only_features:
-      if FLAGS.continue_from_features:
+  if not FLAGS.pipeline == 'only_features' and not FLAGS.pipeline == 'batch_features':
+      if FLAGS.pipeline == 'continue_from_features':
           if not os.path.exists(features_output_path):
               raise("Continue_from_features requested but no feature pickle file found in this directory.")
           with open(features_output_path, 'rb') as f:
@@ -325,18 +345,25 @@ def predict_structure(
 def parse_fasta(fasta_path):
     with open(fasta_path) as f:
         input_fasta_str = f.read()
-    input_seqs, _ = parsers.parse_fasta(input_fasta_str)
-    return input_seqs
+    description_sequence_dict = {}
+    input_seqs, input_descs = parsers.parse_fasta(input_fasta_str)
+    for i, desc in enumerate(input_descs):
+        description_sequence_dict[desc] = input_seqs[i]
+    return description_sequence_dict
 
 def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
-
+  if FLAGS.pipeline == 'continue_from_msas':
+    FLAGS.use_precomputed_msas = True
   #Do not check for MSA tools when MSA already exists.
   run_multimer_system = 'multimer' in FLAGS.model_preset
   use_small_bfd = FLAGS.db_preset == 'reduced_dbs'
   use_mmseqs = FLAGS.db_preset == 'colabfold'
-  if not FLAGS.use_precomputed_msas and not FLAGS.continue_from_features:
+  if FLAGS.precomputed_msas_path and FLAGS.precomputed_msas_list:
+      logging.warning("Flags --precomputed_msas_path and --precomputed_msas_list selected at the same time."
+                      "MSAs from --precomputed_msas_list get priority over MSAs from --precomputed_msas_path.")
+  if not FLAGS.pipeline == 'continue_from_msas' and not FLAGS.pipeline == 'continue_from_features':
       for tool_name in (
           'jackhmmer', 'hhblits', 'hhsearch', 'hmmsearch', 'hmmbuild', 'kalign'):
         if not FLAGS[f'{tool_name}_binary_path'].value:
@@ -417,16 +444,18 @@ def main(argv):
       use_small_bfd=use_small_bfd,
       use_precomputed_msas=FLAGS.use_precomputed_msas,
       use_mmseqs=use_mmseqs,
-      custom_tempdir=FLAGS.custom_tempdir)
+      custom_tempdir=FLAGS.custom_tempdir,
+      precomputed_msas_path=FLAGS.precomputed_msas_path)
 
-  if run_multimer_system:
+  if FLAGS.pipeline == 'batch_features':
+      data_pipeline = pipeline_batch.DataPipeline(monomer_data_pipeline)
+      num_predictions_per_model = 1
+  elif run_multimer_system and not FLAGS.pipeline == 'batch_features':
     num_predictions_per_model = FLAGS.num_multimer_predictions_per_model
     data_pipeline = pipeline_multimer.DataPipeline(
         monomer_data_pipeline=monomer_data_pipeline,
         jackhmmer_binary_path=FLAGS.jackhmmer_binary_path,
-        uniprot_database_path=FLAGS.uniprot_database_path,
-        use_precomputed_msas=FLAGS.use_precomputed_msas,
-        custom_tempdir=FLAGS.custom_tempdir)
+        uniprot_database_path=FLAGS.uniprot_database_path)
   else:
     num_predictions_per_model = 1
     data_pipeline = monomer_data_pipeline
@@ -469,9 +498,9 @@ def main(argv):
   #Code adaptions to handle custom template, no MSA, no template
   #Check that no_msa_list has same number of elements as in fasta_sequence,
   #and convert to bool.
-  parsed_sequences = parse_fasta(FLAGS.fasta_path)
+  description_sequence_dict = parse_fasta(FLAGS.fasta_path)
   if FLAGS.no_msa_list:
-    if len(FLAGS.no_msa_list) != len(parsed_sequences):
+    if len(FLAGS.no_msa_list) != len(description_sequence_dict):
       raise ValueError('--no_msa_list must either be omitted or match '
                        'number of sequences.')
     no_msa_list = []
@@ -484,11 +513,11 @@ def main(argv):
         raise ValueError('--no_msa_list must contain comma separated '
                          'true or false values.')
   else:
-    no_msa_list = [False] * len(parsed_sequences)
+    no_msa_list = [False] * len(description_sequence_dict)
 
 
   if FLAGS.custom_template_list:
-      if len(FLAGS.custom_template_list) != len(parsed_sequences):
+      if len(FLAGS.custom_template_list) != len(description_sequence_dict):
           raise ValueError('--custom_template_list must either be omitted or match '
                            'number of sequences.')
       custom_template_list = []
@@ -499,10 +528,10 @@ def main(argv):
             custom_template_list.append(s)
 
   else:
-      custom_template_list = [None] * len(parsed_sequences)
+      custom_template_list = [None] * len(description_sequence_dict)
 
   if FLAGS.no_template_list:
-      if len(FLAGS.no_template_list) != len(parsed_sequences):
+      if len(FLAGS.no_template_list) != len(description_sequence_dict):
           raise ValueError('--no_template_list must either be omitted or match '
                            'number of sequences.')
       no_template_list = []
@@ -515,7 +544,34 @@ def main(argv):
               raise ValueError('--no_template_list must contain comma separated '
                                'true or false values.')
   else:
-      no_template_list = [False] * len(parsed_sequences)
+      no_template_list = [False] * len(description_sequence_dict)
+
+  if FLAGS.precomputed_msas_list:
+      if len(FLAGS.precomputed_msas_list) != len(description_sequence_dict):
+          raise ValueError('--precomputed_msas_list must either be omitted or match number of sequences.')
+
+      precomputed_msas_list = []
+      for s in FLAGS.precomputed_msas_list:
+          if s in ["None", "none"]:
+              precomputed_msas_list.append(None)
+          else:
+              precomputed_msas_list.append(s)
+  else:
+      precomputed_msas_list = [None] * len(description_sequence_dict)
+
+  if not run_multimer_system and not FLAGS.pipeline == 'batch_features' and FLAGS.precomputed_msas_path:
+      pcmsa_map = pipeline.get_pcmsa_map(FLAGS.precomputed_msas_path,
+                                                             description_sequence_dict)
+      logging.info("Precomputed MSAs map")
+      logging.info(pcmsa_map)
+      if len(pcmsa_map) > 0:
+          precomputed_msas_list = list(pcmsa_map.values())[0]
+      elif len(pcmsa_map) > 1:
+          logging.warning("Found more than one precomputed MSA for given sequence. Will use the first one in the list.")
+          precomputed_msas_list = list(pcmsa_map.values())[0]
+  elif FLAGS.pipeline == 'batch_features' and FLAGS.precomputed_msas_path:
+      logging.warning("Precomputed MSAs will not be copied when running batch features.")
+
 
   predict_structure(
         fasta_path=FLAGS.fasta_path,
@@ -528,7 +584,8 @@ def main(argv):
         random_seed=random_seed,
         no_msa_list=no_msa_list,
         no_template_list=no_template_list,
-        custom_template_list=custom_template_list)
+        custom_template_list=custom_template_list,
+        precomputed_msas_list=precomputed_msas_list)
 
 def sigterm_handler(_signo, _stack_frame):
     raise KeyboardInterrupt

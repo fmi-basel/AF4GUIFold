@@ -1,4 +1,4 @@
-# Copyright 2022 Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+# Copyright 2022 Friedrich Miescher Institute for Biomedical Research
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# Author: Georg Kempf, Friedrich Miescher Institute for Biomedical Research
 # MMSeqs workflow and parameters adapted from https://github.com/sokrypton/ColabFold (https://doi.org/10.5281/zenodo.5123296)
 
 """Library to run MMSeqs from Python."""
@@ -42,7 +43,7 @@ class MMSeqs:
                  max_accept: int = 1000000,
                  s: float = 8,
                  db_load_mode: int = 3,
-                 threads: int = 100,
+                 n_cpu: int = 1,
                  custom_tempdir=None,
                  use_index=False):
         """Initializes the Python MMSeqs wrapper.
@@ -100,7 +101,7 @@ class MMSeqs:
         self.max_accept = max_accept
         self.s = s
         self.db_load_mode = db_load_mode
-        self.threads = threads
+        self.n_cpu = n_cpu
         self.custom_tempdir = custom_tempdir
 
     def run_cmds(self, cmds, stdout_list, stderr_list):
@@ -112,10 +113,8 @@ class MMSeqs:
                     else:
                         cmd[i] = "0"
                 else:
-                    print(cmd[i])
                     cmd[i] = str(item)
-            print('Launching subprocess "%s"', ' '.join(cmd))
-            logging.info('Launching subprocess "%s"', ' '.join(cmd))
+            logging.info(f"Launching subprocess {' '.join(cmd)} with {self.n_cpu} threads.")
             process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -187,7 +186,7 @@ class MMSeqs:
                    self.uniref30_db,
                    os.path.join(uniref_tmp_dir, "res"),
                    os.path.join(uniref_tmp_dir, "tmp"),
-                   "--threads", self.threads,
+                   "--threads", self.n_cpu,
                    ] + search_param
 
             cmd_uniref_expandaln = [self.binary_path,
@@ -198,7 +197,7 @@ class MMSeqs:
                                     self.uniref_db_suffix2,
                                     os.path.join(uniref_tmp_dir, "res_exp"),
                                     "--db-load-mode", self.db_load_mode,
-                                    "--threads", self.threads,
+                                    "--threads", self.n_cpu,
                                     ] + expand_param
             cmd_uniref_mvdb = [self.binary_path,
                                "mvdb",
@@ -218,7 +217,7 @@ class MMSeqs:
                                  "--db-load-mode", self.db_load_mode,
                                  "-e", self.align_eval,
                                  "--max-accept", self.max_accept,
-                                 "--threads", self.threads,
+                                 "--threads", self.n_cpu,
                                  "--alt-ali", "10",
                                  "-a"]
             cmd_uniref_filterresult = [self.binary_path,
@@ -231,7 +230,7 @@ class MMSeqs:
                                         "--qid", "0",
                                         "--qsc", self.qsc,
                                         "--diff", "0",
-                                        "--threads", self.threads,
+                                        "--threads", self.n_cpu,
                                         "--max-seq-id", "1.0",
                                         "--filter-min-enable", "100"]
 
@@ -243,7 +242,7 @@ class MMSeqs:
                                         uniref_a3m_path,
                                         "--msa-format-mode", "6",
                                         "--db-load-mode", self.db_load_mode,
-                                        "--threads", self.threads] + filter_param
+                                        "--threads", self.n_cpu] + filter_param
 
             cmd_touchdb_env = [self.binary_path,
                            "touchdb",
@@ -268,7 +267,7 @@ class MMSeqs:
                               self.env_db,
                               os.path.join(env_tmp_dir, "res_env"),
                               os.path.join(env_tmp_dir, "tmp"),
-                              "--threads", self.threads] + search_param
+                              "--threads", self.n_cpu] + search_param
 
             cmd_env_expandaln = [self.binary_path,
                                  "expandaln",
@@ -280,7 +279,7 @@ class MMSeqs:
                                  "-e", self.expand_eval,
                                  "--expansion-mode", "0",
                                  "--db-load-mode", self.db_load_mode,
-                                 "--threads", self.threads]
+                                 "--threads", self.n_cpu]
 
             cmd_env_align = [self.binary_path,
                              "align",
@@ -291,7 +290,7 @@ class MMSeqs:
                              "--db-load-mode", self.db_load_mode,
                              "-e", self.align_eval,
                              "--max-accept", self.max_accept,
-                             "--threads", self.threads,
+                             "--threads", self.n_cpu,
                              "--alt-ali", "10",
                              "-a"]
 
@@ -306,7 +305,7 @@ class MMSeqs:
                                     "--qsc", self.qsc,
                                     "--diff", "0",
                                     "--max-seq-id", "1.0",
-                                    "--threads", self.threads,
+                                    "--threads", self.n_cpu,
                                     "--filter-min-enable", "100"]
 
             cmd_env_result2msa = [self.binary_path,
@@ -317,7 +316,7 @@ class MMSeqs:
                                   env_a3m_path,
                                   "--msa-format-mode", "6",
                                   "--db-load-mode", self.db_load_mode,
-                                  "--threads", self.threads] + filter_param
+                                  "--threads", self.n_cpu] + filter_param
 
             cmd_merge_dbs = [self.binary_path,
                              "mergedbs",

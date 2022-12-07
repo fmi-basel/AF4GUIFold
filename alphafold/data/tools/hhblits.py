@@ -1,4 +1,5 @@
 # Copyright 2021 DeepMind Technologies Limited
+# Copyright 2022 Friedrich Miescher Institute for Biomedical Research
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,8 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-#Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+#
+# Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
 
 """Library to run HHblits from Python."""
 
@@ -129,7 +130,7 @@ class HHBlits:
         cmd += ['-Z', str(self.z)]
       cmd += db_cmd
 
-      logging.info('Launching subprocess "%s"', ' '.join(cmd))
+      logging.info(f"Launching subprocess {' '.join(cmd)} with {self.n_cpu} threads.")
       process = subprocess.Popen(
           cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
