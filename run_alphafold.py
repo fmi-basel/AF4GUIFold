@@ -53,20 +53,26 @@ from alphafold.model import data
 
 logging.set_verbosity(logging.DEBUG)
 
+flags.DEFINE_list(
+    'fasta_paths', None, 'Paths to FASTA files, each containing a prediction '
+    'target that will be folded one after another. If a FASTA file contains '
+    'multiple sequences, then it will be folded as a multimer. Paths should be '
+    'separated by commas. All FASTA paths must have a unique basename as the '
+    'basename is used to name the output directories for each prediction.')
 
 flags.DEFINE_string('fasta_path', None, 'Path to a single fasta file.')
 flags.DEFINE_string('data_dir', None, 'Path to directory of supporting data.')
 flags.DEFINE_string('output_dir', None, 'Path to a directory that will '
                     'store the results.')
-flags.DEFINE_string('jackhmmer_binary_path', None,
+flags.DEFINE_string('jackhmmer_binary_path', shutil.which('jackhmmer'),
                     'Path to the JackHMMER executable.')
-flags.DEFINE_string('hhblits_binary_path', None,
+flags.DEFINE_string('hhblits_binary_path', shutil.which('hhblits'),
                     'Path to the HHblits executable.')
-flags.DEFINE_string('hhsearch_binary_path', None,
+flags.DEFINE_string('hhsearch_binary_path', shutil.which('hhsearch'),
                     'Path to the HHsearch executable.')
-flags.DEFINE_string('hmmsearch_binary_path', None,
+flags.DEFINE_string('hmmsearch_binary_path', shutil.which('hmmsearch'),
                     'Path to the hmmsearch executable.')
-flags.DEFINE_string('hmmbuild_binary_path', None,
+flags.DEFINE_string('hmmbuild_binary_path', shutil.which('hmmbuild'),
                     'Path to the hmmbuild executable.')
 flags.DEFINE_string('hhalign_binary_path', None,
                     'Path to the hhalign executable.')
@@ -170,8 +176,6 @@ flags.DEFINE_enum('pipeline', 'full', [
 
 FLAGS = flags.FLAGS
 
-
-
 MAX_TEMPLATE_HITS = 20
 RELAX_MAX_ITERATIONS = 0
 RELAX_ENERGY_TOLERANCE = 2.39
@@ -249,7 +253,7 @@ def predict_structure(
       relaxed_pdbs = {}
       relax_metrics = {}
       ranking_confidences = {}
-    
+
       # Run the models.
       num_models = len(model_runners)
       for model_index, (model_name, model_runner) in enumerate(
@@ -260,7 +264,7 @@ def predict_structure(
         processed_feature_dict = model_runner.process_features(
             feature_dict, random_seed=model_random_seed)
         timings[f'process_features_{model_name}'] = time.time() - t_0
-    
+
         t_0 = time.time()
         prediction_result = model_runner.predict(processed_feature_dict,
                                                  random_seed=model_random_seed)
@@ -269,7 +273,7 @@ def predict_structure(
         logging.info(
             'Total JAX model %s on %s predict time (includes compilation time, see --benchmark): %.1fs',
             model_name, fasta_name, t_diff)
-    
+
         if benchmark:
           t_0 = time.time()
           model_runner.predict(processed_feature_dict,
@@ -279,15 +283,15 @@ def predict_structure(
           logging.info(
               'Total JAX model %s on %s predict time (excludes compilation time): %.1fs',
               model_name, fasta_name, t_diff)
-    
+
         plddt = prediction_result['plddt']
         ranking_confidences[model_name] = prediction_result['ranking_confidence']
-    
+
         # Save the model outputs.
         result_output_path = os.path.join(output_dir, f'result_{model_name}.pkl')
         with open(result_output_path, 'wb') as f:
           pickle.dump(prediction_result, f, protocol=4)
-    
+
         # Add the predicted LDDT in the b-factor column.
         # Note that higher predicted LDDT value means higher model confidence.
         plddt_b_factors = np.repeat(
@@ -297,12 +301,12 @@ def predict_structure(
             result=prediction_result,
             b_factors=plddt_b_factors,
             remove_leading_feature_dimension=not model_runner.multimer_mode)
-    
+
         unrelaxed_pdbs[model_name] = protein.to_pdb(unrelaxed_protein)
         unrelaxed_pdb_path = os.path.join(output_dir, f'unrelaxed_{model_name}.pdb')
         with open(unrelaxed_pdb_path, 'w') as f:
           f.write(unrelaxed_pdbs[model_name])
-    
+
         if amber_relaxer:
           # Relax the prediction.
           t_0 = time.time()
@@ -313,15 +317,15 @@ def predict_structure(
               'remaining_violations_count': sum(violations)
           }
           timings[f'relax_{model_name}'] = time.time() - t_0
-    
+
           relaxed_pdbs[model_name] = relaxed_pdb_str
-    
+
           # Save the relaxed PDB.
           relaxed_output_path = os.path.join(
               output_dir, f'relaxed_{model_name}.pdb')
           with open(relaxed_output_path, 'w') as f:
             f.write(relaxed_pdb_str)
-    
+
       # Rank by model confidence and write out relaxed PDBs in rank order.
       ranked_order = []
       for idx, (model_name, _) in enumerate(
@@ -333,15 +337,15 @@ def predict_structure(
             f.write(relaxed_pdbs[model_name])
           else:
             f.write(unrelaxed_pdbs[model_name])
-    
+
       ranking_output_path = os.path.join(output_dir, 'ranking_debug.json')
       with open(ranking_output_path, 'w') as f:
         label = 'iptm+ptm' if 'iptm' in prediction_result else 'plddts'
         f.write(json.dumps(
             {label: ranking_confidences, 'order': ranked_order}, indent=4))
-    
+
       logging.info('Final timings for %s: %s', fasta_name, timings)
-    
+
       timings_output_path = os.path.join(output_dir, 'timings.json')
       with open(timings_output_path, 'w') as f:
         f.write(json.dumps(timings, indent=4))
@@ -450,7 +454,7 @@ def main(argv):
       uniref90_database_path=FLAGS.uniref90_database_path,
       mgnify_database_path=FLAGS.mgnify_database_path,
       bfd_database_path=FLAGS.bfd_database_path,
-      uniclust30_database_path=FLAGS.uniclust30_database_path,
+      uniref30_database_path=FLAGS.uniref30_database_path,
       small_bfd_database_path=FLAGS.small_bfd_database_path,
       uniref30_database_path=FLAGS.uniref30_database_path,
       colabfold_envdb_database_path=FLAGS.colabfold_envdb_database_path,

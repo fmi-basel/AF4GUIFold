@@ -52,6 +52,7 @@ import gzip
 FeatureDict = MutableMapping[str, np.ndarray]
 TemplateSearcher = Union[hhsearch.HHSearch, hmmsearch.Hmmsearch]
 
+
 def make_sequence_features(
     sequence: str, description: str, num_res: int) -> FeatureDict:
   """Constructs a feature dict of sequence features."""
@@ -67,6 +68,7 @@ def make_sequence_features(
   features['seq_length'] = np.array([num_res] * num_res, dtype=np.int32)
   features['sequence'] = np.array([sequence.encode('utf-8')], dtype=np.object_)
   return features
+
 
 def make_msa_features(msas: Sequence[parsers.Msa]) -> FeatureDict:
     """Constructs a feature dict of MSA features."""
@@ -594,7 +596,7 @@ class DataPipeline:
             else:
                 hhblits_bfd_uniref_result = msa_jobs_results[0]
                 bfd_msa = parsers.parse_a3m(hhblits_bfd_uniref_result['a3m'])
-    
+
             jackhmmer_mgnify_result = msa_jobs_results[1]
             if 'sto' in jackhmmer_mgnify_result:
                 mgnify_msa = parsers.parse_stockholm(jackhmmer_mgnify_result['sto'])
@@ -743,6 +745,5 @@ class DataPipeline:
         logging.info('Total number of templates (NB: this can include bad '
                      'templates and is later filtered to top 4): %d empty dummy template (as requested).',
                      templates_result.features['template_domain_names'].shape[0])
-
 
     return {**sequence_features, **msa_features, **templates_result.features}

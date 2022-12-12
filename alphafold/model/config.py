@@ -35,12 +35,12 @@ def model_config(name: str, num_recycle: int) -> ml_collections.ConfigDict:
   global NUM_RECYCLE
   NUM_RECYCLE = num_recycle
 
-  if 'multimer' in name:
-    return CONFIG_MULTIMER
-
   if name not in CONFIG_DIFFS:
     raise ValueError(f'Invalid model name {name}.')
-  cfg = copy.deepcopy(CONFIG)
+  if 'multimer' in name:
+    cfg = copy.deepcopy(CONFIG_MULTIMER)
+  else:
+    cfg = copy.deepcopy(CONFIG)
   cfg.update_from_flattened_dict(CONFIG_DIFFS[name])
   return cfg
 
@@ -61,11 +61,11 @@ MODEL_PRESETS = {
         'model_5_ptm',
     ),
     'multimer': (
-        'model_1_multimer_v2',
-        'model_2_multimer_v2',
-        'model_3_multimer_v2',
-        'model_4_multimer_v2',
-        'model_5_multimer_v2',
+        'model_1_multimer_v3',
+        'model_2_multimer_v3',
+        'model_3_multimer_v3',
+        'model_4_multimer_v3',
+        'model_5_multimer_v3',
     ),
 }
 MODEL_PRESETS['monomer_casp14'] = MODEL_PRESETS['monomer']
@@ -127,8 +127,32 @@ CONFIG_DIFFS = {
     },
     'model_5_ptm': {
         'model.heads.predicted_aligned_error.weight': 0.1
-    }
+    },
+    'model_1_multimer_v3': {},
+    'model_2_multimer_v3': {},
+    'model_3_multimer_v3': {},
+    'model_4_multimer_v3': {
+        'model.embeddings_and_evoformer.num_extra_msa': 1152
+    },
+    'model_5_multimer_v3': {
+        'model.embeddings_and_evoformer.num_extra_msa': 1152
+    },
 }
+# Key differences between multimer v1/v2 and v3, mostly due to numerical
+# optimisations in the TriangleMultiplication module.
+common_updates = {
+    'model.embeddings_and_evoformer.num_msa': 252,
+    'model.embeddings_and_evoformer.num_extra_msa': 1152,
+    'model.embeddings_and_evoformer.evoformer.triangle_multiplication_incoming.fuse_projection_weights': False,
+    'model.embeddings_and_evoformer.evoformer.triangle_multiplication_outgoing.fuse_projection_weights': False,
+    'model.embeddings_and_evoformer.template.template_pair_stack.triangle_multiplication_incoming.fuse_projection_weights': False,
+    'model.embeddings_and_evoformer.template.template_pair_stack.triangle_multiplication_outgoing.fuse_projection_weights': False,
+}
+CONFIG_DIFFS.update(
+    {f'model_{i}_multimer': common_updates for i in range(1, 6)})
+CONFIG_DIFFS.update(
+    {f'model_{i}_multimer_v2': common_updates for i in range(1, 6)})
+
 
 CONFIG = ml_collections.ConfigDict({
     'data': {
@@ -269,14 +293,16 @@ CONFIG = ml_collections.ConfigDict({
                     'equation': 'ikc,jkc->ijc',
                     'num_intermediate_channel': 128,
                     'orientation': 'per_row',
-                    'shared_dropout': True
+                    'shared_dropout': True,
+                    'fuse_projection_weights': False,
                 },
                 'triangle_multiplication_incoming': {
                     'dropout_rate': 0.25,
                     'equation': 'kjc,kic->ijc',
                     'num_intermediate_channel': 128,
                     'orientation': 'per_row',
-                    'shared_dropout': True
+                    'shared_dropout': True,
+                    'fuse_projection_weights': False,
                 },
                 'pair_transition': {
                     'dropout_rate': 0.0,
@@ -337,14 +363,16 @@ CONFIG = ml_collections.ConfigDict({
                         'equation': 'ikc,jkc->ijc',
                         'num_intermediate_channel': 64,
                         'orientation': 'per_row',
-                        'shared_dropout': True
+                        'shared_dropout': True,
+                        'fuse_projection_weights': False,
                     },
                     'triangle_multiplication_incoming': {
                         'dropout_rate': 0.25,
                         'equation': 'kjc,kic->ijc',
                         'num_intermediate_channel': 64,
                         'orientation': 'per_row',
-                        'shared_dropout': True
+                        'shared_dropout': True,
+                        'fuse_projection_weights': False,
                     },
                     'pair_transition': {
                         'dropout_rate': 0.0,
@@ -363,7 +391,7 @@ CONFIG = ml_collections.ConfigDict({
             'multimer_mode': False,
             'subbatch_size': 4,
             'use_remat': False,
-            'zero_init': True
+            'zero_init': True,
         },
         'heads': {
             'distogram': {
@@ -492,27 +520,29 @@ CONFIG_MULTIMER = ml_collections.ConfigDict({
                     'gating': True,
                     'num_head': 4,
                     'orientation': 'per_row',
-                    'shared_dropout': True
+                    'shared_dropout': True,
                 },
                 'triangle_multiplication_incoming': {
                     'dropout_rate': 0.25,
                     'equation': 'kjc,kic->ijc',
                     'num_intermediate_channel': 128,
                     'orientation': 'per_row',
-                    'shared_dropout': True
+                    'shared_dropout': True,
+                    'fuse_projection_weights': True,
                 },
                 'triangle_multiplication_outgoing': {
                     'dropout_rate': 0.25,
                     'equation': 'ikc,jkc->ijc',
                     'num_intermediate_channel': 128,
                     'orientation': 'per_row',
-                    'shared_dropout': True
+                    'shared_dropout': True,
+                    'fuse_projection_weights': True,
                 }
             },
             'extra_msa_channel': 64,
             'extra_msa_stack_num_block': 4,
-            'num_msa': 252,
-            'num_extra_msa': 1152,
+            'num_msa': 508,
+            'num_extra_msa': 2048,
             'masked_msa': {
                 'profile_prob': 0.1,
                 'replace_fraction': 0.15,
@@ -573,24 +603,28 @@ CONFIG_MULTIMER = ml_collections.ConfigDict({
                         'equation': 'kjc,kic->ijc',
                         'num_intermediate_channel': 64,
                         'orientation': 'per_row',
-                        'shared_dropout': True
+                        'shared_dropout': True,
+                        'fuse_projection_weights': True,
                     },
                     'triangle_multiplication_outgoing': {
                         'dropout_rate': 0.25,
                         'equation': 'ikc,jkc->ijc',
                         'num_intermediate_channel': 64,
                         'orientation': 'per_row',
-                        'shared_dropout': True
+                        'shared_dropout': True,
+                        'fuse_projection_weights': True,
                     }
                 }
             },
         },
         'global_config': {
+            'bfloat16': True,
+            'bfloat16_output': False,
             'deterministic': False,
             'multimer_mode': True,
             'subbatch_size': 4,
             'use_remat': False,
-            'zero_init': True
+            'zero_init': True,
         },
         'heads': {
             'distogram': {
@@ -660,7 +694,13 @@ CONFIG_MULTIMER = ml_collections.ConfigDict({
             }
         },
         'num_ensemble_eval': 1,
-        'num_recycle': NUM_RECYCLE,
+        'num_recycle': 20,
+        # A negative value indicates that no early stopping will occur, i.e.
+        # the model will always run `num_recycle` number of recycling
+        # iterations.  A positive value will enable early stopping if the
+        # difference in pairwise distances is less than the tolerance between
+        # recycling steps.
+        'recycle_early_stop_tolerance': 0.5,
         'resample_msa_in_recycling': True
     }
 })
