@@ -173,7 +173,7 @@ def create_precomputed_msas_mapping(precomputed_msas_path):
 def copy_files(pcmsa_path, msa_output_dir, convert=False):
     known_files = ['uniref30_colabfold_envdb',
                    'small_bfd_hits',
-                   'bfd_uniclust_hits',
+                   'bfd_uniref_hits',
                    'mgnify_hits',
                    'uniprot_hits',
                    'uniref90_hits',
@@ -372,9 +372,8 @@ class DataPipeline:
                uniref90_database_path: str,
                mgnify_database_path: str,
                bfd_database_path: Optional[str],
-               uniclust30_database_path: Optional[str],
+               uniref30_database_path: Optional[str],
                small_bfd_database_path: Optional[str],
-               uniref30_database_path: str,
                colabfold_envdb_database_path: str,
                template_searcher: TemplateSearcher,
                template_featurizer: templates.TemplateHitFeaturizer,
@@ -398,9 +397,9 @@ class DataPipeline:
           database_path=small_bfd_database_path,
           custom_tempdir=custom_tempdir)
     else:
-      self.hhblits_bfd_uniclust_runner = hhblits.HHBlits(
+      self.hhblits_bfd_uniref_runner = hhblits.HHBlits(
           binary_path=hhblits_binary_path,
-          databases=[bfd_database_path, uniclust30_database_path],
+          databases=[bfd_database_path, uniref30_database_path],
           custom_tempdir=custom_tempdir)
     self.jackhmmer_mgnify_runner = jackhmmer.Jackhmmer(
         binary_path=jackhmmer_binary_path,
@@ -483,7 +482,7 @@ class DataPipeline:
                 for msa_file in ['uniref30_colabfold_envdb.a3m',
                             'small_bfd_hits.a3m',
                             'uniref90_hits.a3m',
-                            'bfd_uniclust_hits.a3m',
+                            'bfd_uniref_hits.a3m',
                             'mgnify_hits.a3m']:
                     msa_file = os.path.join(msa_output_dir, msa_file)
                     if os.path.exists(msa_file):
@@ -497,7 +496,7 @@ class DataPipeline:
     if self._use_small_bfd:
         self.jackhmmer_small_bfd_runner.n_cpu = tool_cpu
     else:
-        self.hhblits_bfd_uniclust_runner.n_cpu = tool_cpu
+        self.hhblits_bfd_uniref_runner.n_cpu = tool_cpu
     logging.info(f"No MSA: {no_msa}; No Templates: {no_template}; Custom Template {custom_template}; Precomputed MSAs {precomputed_msas}")
     if isinstance(no_msa, list):
         if len(no_msa) > 1:
@@ -541,9 +540,9 @@ class DataPipeline:
                     self.use_precomputed_msas))
 
             else:
-                bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
+                bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniref_hits.a3m')
                 msa_jobs.append((
-                    self.hhblits_bfd_uniclust_runner,
+                    self.hhblits_bfd_uniref_runner,
                     input_fasta_path,
                     bfd_out_path,
                     'a3m',
@@ -593,8 +592,8 @@ class DataPipeline:
                 else:
                     raise ValueError("Format not known.")
             else:
-                hhblits_bfd_uniclust_result = msa_jobs_results[0]
-                bfd_msa = parsers.parse_a3m(hhblits_bfd_uniclust_result['a3m'])
+                hhblits_bfd_uniref_result = msa_jobs_results[0]
+                bfd_msa = parsers.parse_a3m(hhblits_bfd_uniref_result['a3m'])
     
             jackhmmer_mgnify_result = msa_jobs_results[1]
             if 'sto' in jackhmmer_mgnify_result:

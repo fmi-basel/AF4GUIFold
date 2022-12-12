@@ -76,8 +76,6 @@ flags.DEFINE_string('kalign_binary_path', None,
                     'Path to the Kalign executable.')
 flags.DEFINE_string('uniref90_database_path', None, 'Path to the Uniref90 '
                     'database for use by JackHMMER.')
-flags.DEFINE_string('uniref30_database_path', None, 'Path to the Uniref30 '
-                                                    'database for use by MMSeqs2.')
 flags.DEFINE_string('colabfold_envdb_database_path', None, 'Path to the colabfold_envdb '
                                                     'database for use by MMSeqs2.')
 flags.DEFINE_string('mgnify_database_path', None, 'Path to the MGnify '
@@ -86,7 +84,7 @@ flags.DEFINE_string('bfd_database_path', None, 'Path to the BFD '
                     'database for use by HHblits.')
 flags.DEFINE_string('small_bfd_database_path', None, 'Path to the small '
                     'version of BFD used with the "reduced_dbs" preset.')
-flags.DEFINE_string('uniclust30_database_path', None, 'Path to the Uniclust30 '
+flags.DEFINE_string('uniref30_database_path', None, 'Path to the UniRef30 '
                     'database for use by HHblits.')
 flags.DEFINE_string('uniprot_database_path', None, 'Path to the Uniprot '
                     'database for use by JackHMMer.')
@@ -249,6 +247,7 @@ def predict_structure(
 
       unrelaxed_pdbs = {}
       relaxed_pdbs = {}
+      relax_metrics = {}
       ranking_confidences = {}
     
       # Run the models.
@@ -307,7 +306,12 @@ def predict_structure(
         if amber_relaxer:
           # Relax the prediction.
           t_0 = time.time()
-          relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
+          relaxed_pdb_str, _, violations = amber_relaxer.process(
+              prot=unrelaxed_protein)
+          relax_metrics[model_name] = {
+              'remaining_violations': violations,
+              'remaining_violations_count': sum(violations)
+          }
           timings[f'relax_{model_name}'] = time.time() - t_0
     
           relaxed_pdbs[model_name] = relaxed_pdb_str
@@ -341,6 +345,10 @@ def predict_structure(
       timings_output_path = os.path.join(output_dir, 'timings.json')
       with open(timings_output_path, 'w') as f:
         f.write(json.dumps(timings, indent=4))
+      if amber_relaxer:
+        relax_metrics_path = os.path.join(output_dir, 'relax_metrics.json')
+        with open(relax_metrics_path, 'w') as f:
+          f.write(json.dumps(relax_metrics, indent=4))
 
       evaluation = EvaluationPipeline(FLAGS.fasta_path)
       evaluation.run_pipeline()
@@ -383,7 +391,7 @@ def main(argv):
                   should_be_set=use_small_bfd)
       _check_flag('bfd_database_path', 'db_preset',
                   should_be_set=not use_small_bfd)
-      _check_flag('uniclust30_database_path', 'db_preset',
+      _check_flag('uniref30_database_path', 'db_preset',
                   should_be_set=not use_small_bfd)
       _check_flag('pdb70_database_path', 'model_preset',
                   should_be_set=not run_multimer_system)
