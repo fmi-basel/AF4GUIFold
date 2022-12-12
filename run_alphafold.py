@@ -46,11 +46,12 @@ from alphafold.relax import relax
 from alphafold.data import parsers
 import numpy as np
 import inspect
+import gzip
 
 from alphafold.model import data
 # Internal import (7716).
 
-logging.set_verbosity(logging.INFO)
+logging.set_verbosity(logging.DEBUG)
 
 
 flags.DEFINE_string('fasta_path', None, 'Path to a single fasta file.')
@@ -159,9 +160,9 @@ flags.DEFINE_integer('num_recycle', 3, 'Define maximum number of model recycles.
 #                                                   ' Useful for splitting up the job into CPU and GPU resources.')
 flags.DEFINE_integer('num_cpus', 1, 'Number of CPUs to use for feature generation.')
 flags.DEFINE_string('precomputed_msas_path', None, 'Path to a directory with precomputed MSAs (job_dir/msas)')
-#flags.DEFINE_boolean('batch_features', False, 'Runs the monomer feature pipeline for all sequences in the input MSA file.')
+#flags.DEFINE_boolean('batch_msas', False, 'Runs the monomer feature pipeline for all sequences in the input MSA file.')
 flags.DEFINE_enum('pipeline', 'full', [
-                'full', 'only_features', 'batch_features', 'continue_from_msas', 'continue_from_features'],
+                'full', 'only_features', 'batch_msas', 'continue_from_msas', 'continue_from_features'],
                 'Choose preset pipeline configuration - '
                 'full pipeline or '
                 'stop after feature generation (only features) or '
@@ -227,18 +228,24 @@ def predict_structure(
             num_cpu=FLAGS.num_cpus)
       timings['features'] = time.time() - t_0
 
-      # Write out features as a pickled dictionary.
 
-      with open(features_output_path, 'wb') as f:
-        pickle.dump(feature_dict, f, protocol=4)
+      # Write out features as a pickled dictionary.
+      if not FLAGS.pipeline == 'batch_features':
+          with open(features_output_path, 'wb') as f:
+            pickle.dump(feature_dict, f, protocol=4)
 
   #Stop here if only_msa flag is set
-  if not FLAGS.pipeline == 'only_features' and not FLAGS.pipeline == 'batch_features':
+  if not FLAGS.pipeline == 'only_features' and not FLAGS.pipeline == 'batch_msas':
       if FLAGS.pipeline == 'continue_from_features':
-          if not os.path.exists(features_output_path):
+          if os.path.exists(features_output_path):
+              with open(features_output_path, 'rb') as f:
+                feature_dict = pickle.load(f)
+          elif os.path.exists(f"{features_output_path}.gz"):
+              with gzip.open(f"{features_output_path}.gz", 'rb') as f:
+                  feature_dict = pickle.load(f)
+          else:
               raise("Continue_from_features requested but no feature pickle file found in this directory.")
-          with open(features_output_path, 'rb') as f:
-            feature_dict = pickle.load(f)
+
 
       unrelaxed_pdbs = {}
       relaxed_pdbs = {}
@@ -447,10 +454,10 @@ def main(argv):
       custom_tempdir=FLAGS.custom_tempdir,
       precomputed_msas_path=FLAGS.precomputed_msas_path)
 
-  if FLAGS.pipeline == 'batch_features':
+  if FLAGS.pipeline == 'batch_msas':
       data_pipeline = pipeline_batch.DataPipeline(monomer_data_pipeline)
       num_predictions_per_model = 1
-  elif run_multimer_system and not FLAGS.pipeline == 'batch_features':
+  elif run_multimer_system and not FLAGS.pipeline == 'batch_msas':
     num_predictions_per_model = FLAGS.num_multimer_predictions_per_model
     data_pipeline = pipeline_multimer.DataPipeline(
         monomer_data_pipeline=monomer_data_pipeline,
@@ -559,7 +566,7 @@ def main(argv):
   else:
       precomputed_msas_list = [None] * len(description_sequence_dict)
 
-  if not run_multimer_system and not FLAGS.pipeline == 'batch_features' and FLAGS.precomputed_msas_path:
+  if not run_multimer_system and not FLAGS.pipeline == 'batch_msas' and FLAGS.precomputed_msas_path:
       pcmsa_map = pipeline.get_pcmsa_map(FLAGS.precomputed_msas_path,
                                                              description_sequence_dict)
       logging.info("Precomputed MSAs map")
@@ -569,7 +576,7 @@ def main(argv):
       elif len(pcmsa_map) > 1:
           logging.warning("Found more than one precomputed MSA for given sequence. Will use the first one in the list.")
           precomputed_msas_list = list(pcmsa_map.values())[0]
-  elif FLAGS.pipeline == 'batch_features' and FLAGS.precomputed_msas_path:
+  elif FLAGS.pipeline == 'batch_msas' and FLAGS.precomputed_msas_path:
       logging.warning("Precomputed MSAs will not be copied when running batch features.")
 
 

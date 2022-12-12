@@ -45,6 +45,7 @@ import signal
 import re
 import json
 from shutil import copyfile
+import gzip
 
 # Internal import (7716).
 
@@ -108,7 +109,7 @@ def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
     """Runs an MSA tool, checking if output already exists first."""
     msa_out_path_a3m = msa_out_path.replace(".sto", ".a3m")
     if not use_precomputed_msas or (not os.path.exists(msa_out_path) and not os.path.exists(msa_out_path_a3m)):
-        logging.info(f"No MSA found in {msa_out_path} or {msa_out_path_a3m}")
+        logging.warning(f"No MSA found in {msa_out_path} or {msa_out_path_a3m}")
         if msa_format == 'sto' and max_sto_sequences is not None:
             result = msa_runner.query(input_fasta_path, max_sto_sequences)[0]  # pytype: disable=wrong-arg-count
         else:
@@ -119,7 +120,7 @@ def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
         if os.path.exists(msa_out_path_a3m) and msa_format == 'sto':
             msa_format = 'a3m'
             msa_out_path = msa_out_path_a3m
-        logging.warning('Reading MSA from file %s', msa_out_path)
+        logging.info('Reading MSA from file %s', msa_out_path)
         if msa_format == 'sto' and max_sto_sequences is not None:
             precomputed_msa = parsers.truncate_stockholm_msa(
                 msa_out_path, max_sto_sequences)
@@ -132,12 +133,38 @@ def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
 
 def create_precomputed_msas_mapping(precomputed_msas_path):
     description_sequence_dict = {}
+    lines = []
     for root_dir, dirs, files in os.walk(precomputed_msas_path):
-        if "uniref90_hits.sto" in files:
-            with open(os.path.join(root_dir, "uniref90_hits.sto")) as f:
-                lines = [line for line in f.readlines() if not line.startswith('#')]
-            desc, sequence = lines[2].split()
-            description_sequence_dict[desc] = sequence.replace('-', '')
+        for f in files:
+            if re.search("uniref90_hits", f):
+                full_path = os.path.join(root_dir, f)
+                if not full_path.endswith(".gz"):
+                    with open(full_path) as f:
+                        lines = [line for line in f.readlines() if not line.startswith('#')]
+
+
+                    if len(lines) > 0:
+                        desc, sequence = lines[2].split()
+                        description_sequence_dict[desc] = sequence.replace('-', '')
+                    else:
+                        logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
+                elif full_path.endswith(".gz"):
+                    with gzip.open(full_path, 'rb') as f:
+                        c = f.read()
+                    c = c.decode('utf-8')
+                    lines = [line for line in c.splitlines() if not line.startswith('#')]
+                print(lines)
+                if len(lines) > 0:
+                    if re.search(".a3m", full_path):
+                        desc, sequence = lines[1], lines[2]
+                        description_sequence_dict[desc] = sequence.replace('-', '')
+                    elif re.search(".sto", full_path):
+                        desc, sequence = lines[2].split()
+                        description_sequence_dict[desc] = sequence.replace('-', '')
+                    else:
+                        logging.warning("Wrong MSA format. Expected sto or a3m file extension.")
+                else:
+                    logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
 
     if len(description_sequence_dict) == 0:
         logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
@@ -148,23 +175,40 @@ def copy_files(pcmsa_path, msa_output_dir, convert=False):
                    'small_bfd_hits',
                    'bfd_uniclust_hits',
                    'mgnify_hits',
+                   'uniprot_hits',
                    'uniref90_hits',
                    'pdb_hits']
     logging.info(f"Precomputed MSAs path: {pcmsa_path}.")
     for f in os.listdir(pcmsa_path):
-        if os.path.splitext(os.path.basename(f))[0] in known_files and not f.endswith(".pkl"):
-            ext = os.path.splitext(os.path.basename(f))[1]
+        if any([re.search(kf, f) for kf in known_files]):
+            logging.info(f"Found {f} in precomputed msas")
             src_path = os.path.join(pcmsa_path, f)
             target_path = os.path.join(msa_output_dir, os.path.basename(f))
-            if ext == '.a3m' or convert is False:
+            if f.endswith(('.a3m', '.a3m.gz')) or convert is False:
                 if not os.path.exists(target_path):
-                    logging.info(f"Copying {src_path} to {target_path}")
-                    copyfile(src_path, target_path)
+                    if not f.endswith('.gz'):
+                        logging.info(f"Copying {src_path} to {target_path}")
+                        copyfile(src_path, target_path)
+                    else:
+                        target_path = target_path.replace(".gz", "")
+                        logging.info(f"Copying {src_path} to {target_path}")
+                        with gzip.open(src_path, 'rb') as f:
+                            with open(target_path, 'w') as f_out:
+                                c = f.read()
+                                f_out.write(c.decode('utf-8'))
                 else:
                     logging.info(f"Not copying precomputed MSA. {target_path} already exists.")
-            elif ext == '.sto' and convert is True:
-                with open(src_path, 'r') as f:
-                    sto_content = f.read()
+            elif f.endswith(('.sto', '.sto.gz')) and convert is True:
+                if not f.endswith('.gz'):
+                    logging.info(f"Copying {src_path} to {target_path}")
+                    with open(src_path, 'r') as f:
+                        sto_content = f.read()
+                else:
+                    target_path = target_path.replace(".gz", "")
+                    logging.info(f"Copying {src_path} to {target_path}")
+                    with gzip.open(src_path, 'rb') as f:
+                        sto_content = f.read()
+                        sto_content = sto_content.decode('utf-8')
                 sto = parsers.deduplicate_stockholm_msa(sto_content)
                 sto = parsers.remove_empty_columns_from_stockholm_msa(sto)
                 a3m = parsers.convert_stockholm_to_a3m(sto)
@@ -173,7 +217,7 @@ def copy_files(pcmsa_path, msa_output_dir, convert=False):
                     f.write(a3m)
 
         else:
-            logging.warning(f"{f} not known. Not copying.")
+            logging.debug(f"{f} not known. Not copying.")
 
 def slice_msa(msa_file, input_sequence):
     ext = os.path.splitext(os.path.basename(msa_file))[1]
@@ -217,7 +261,6 @@ def slice_msa(msa_file, input_sequence):
         #     new_align = align[:, full_sequence_start:full_sequence_end + 1]
         #     SeqIO.write(new_align, msa_file, format)
         if format == 'fasta':
-            print(f"FORMAT FASTA")
             #a3m includes insertions that result in unequal sequence length for records. These need to be removed
             #to slice the subsequence and then re-added to the sliced sequences.
             records = [record for record in SeqIO.parse(msa_file, format)]
@@ -261,8 +304,8 @@ def slice_msa(msa_file, input_sequence):
 def is_subsequence(input_sequence, precomputed_msas_path):
     desc_seq_dict = create_precomputed_msas_mapping(precomputed_msas_path)
     for seq in desc_seq_dict.values():
-        if re.search(str(input_sequence), str(seq)):
-            logging.debug(f"{input_sequence} is a subsequence of {seq}")
+        if re.search(input_sequence, seq):
+            logging.debug(f"{list(input_sequence)} is a subsequence of {list(seq)}")
             if len(input_sequence) < len(seq):
                 return True
         else:
@@ -308,7 +351,7 @@ def get_pcmsa_map(precomputed_msas_path, new_map):
                 sequence = value
             if re.search(sequence, prev_sequence):
                 #Check if previous job was monomer job
-                if 'uniref90_hits.sto' in os.listdir(precomputed_msas_path):
+                if any([re.search('uniref90_hits', f) for f in os.listdir(precomputed_msas_path)]):
                     prev_msa_dir = precomputed_msas_path
                 elif prev_folder_name in os.listdir(precomputed_msas_path):
                     prev_msa_dir = os.path.join(precomputed_msas_path, prev_folder_name)
@@ -434,6 +477,7 @@ class DataPipeline:
                 precomputed_msas = precomputed_msas[0]
         if not precomputed_msas in [None, "None", "none"]:
             if is_subsequence(input_sequence, precomputed_msas):
+                #is_subsequence(input_sequence, precomputed_msas)
                 copy_files(precomputed_msas, msa_output_dir, convert=True)
                 logging.info("Input sequence is a subsequence of provided MSAs. MSAs will be cropped.")
                 for msa_file in ['uniref30_colabfold_envdb.a3m',
@@ -446,7 +490,7 @@ class DataPipeline:
                         slice_msa(msa_file, input_sequence)
             else:
                 copy_files(precomputed_msas, msa_output_dir, convert=False)
-                logging.info("Not a subsequence.")
+                logging.debug("Not a subsequence.")
     self.mmseqs_runner.n_cpu = mmseqs_cpu
     self.jackhmmer_uniref90_runner.n_cpu = tool_cpu
     self.jackhmmer_mgnify_runner.n_cpu = tool_cpu
@@ -524,8 +568,8 @@ class DataPipeline:
             self.use_precomputed_msas,
             self.uniref_max_hits))
 
-    logging.info("Job list")
-    logging.info(msa_jobs)
+    logging.debug("Job list")
+    logging.debug(msa_jobs)
     if not len(msa_jobs) == 0:
         with closing(Pool(2, self.init_worker)) as pool:
             try:
@@ -655,7 +699,7 @@ class DataPipeline:
         with open(template_result_out, 'rb') as f:
             templates_result = pickle.load(f)
     else:
-        logging.info("Get template from pdb hits or custom file.")
+        logging.info("Getting template from pdb hits or custom file.")
         templates_result = self.template_featurizer.get_templates(
             query_sequence=input_sequence,
             hits=pdb_template_hits)
@@ -667,15 +711,14 @@ class DataPipeline:
         description=input_description,
         num_res=num_res)
 
-    logging.info(no_msa)
     if no_msa:
         empty_msa = Msa(sequences=[input_sequence],
             deletion_matrix=[[0 for _ in range(len(input_sequence))]],
             descriptions=[input_description])
         msa_features = make_msa_features((empty_msa, empty_msa, empty_msa))
-        logging.info("Not using MSA")
+        logging.debug("Using empty MSA.")
     else:
-        logging.info("Using MSA")
+        logging.debug("Using MSA")
         if self._use_mmseqs:
             msa_features = make_msa_features((uniref90_msa, uniref30_colabfold_envdb_msa))
         else:
