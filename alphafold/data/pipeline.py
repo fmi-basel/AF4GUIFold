@@ -134,52 +134,60 @@ def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
 
 
 def create_precomputed_msas_mapping(precomputed_msas_path):
-    description_sequence_dict = {}
+    path_sequence_dict = {}
     lines = []
-    for root_dir, dirs, files in os.walk(precomputed_msas_path):
+    logging.info(f"Searching {precomputed_msas_path} for precomputed MSAs.")
+    for root_dir, dirs, files in os.walk(os.path.abspath(precomputed_msas_path)):
         for f in files:
             if re.search("uniref90_hits", f):
                 full_path = os.path.join(root_dir, f)
                 if not full_path.endswith(".gz"):
                     with open(full_path) as f:
-                        lines = [line for line in f.readlines() if not line.startswith('#')]
-
+                        lines = [line for line in f.readlines() if not line.startswith(('#', '\n', '//'))]
 
                     if len(lines) > 0:
-                        desc, sequence = lines[2].split()
-                        description_sequence_dict[desc] = sequence.replace('-', '')
+                        desc, sequence = lines[0].split()
+                        path_sequence_dict[root_dir] = sequence.replace('-', '')
+                        for line in lines[1:]:
+                            line_desc, line_sequence = line.split()
+                            if line_desc == desc:
+                                path_sequence_dict[root_dir] += line_sequence.replace('-', '')
                     else:
                         logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
                 elif full_path.endswith(".gz"):
                     with gzip.open(full_path, 'rb') as f:
                         c = f.read()
                     c = c.decode('utf-8')
-                    lines = [line for line in c.splitlines() if not line.startswith('#')]
-                print(lines)
+                    lines = [line for line in c.splitlines() if not line.startswith(('#', '\n', '//')) and line]
+
                 if len(lines) > 0:
                     if re.search(".a3m", full_path):
-                        desc, sequence = lines[1], lines[2]
-                        description_sequence_dict[desc] = sequence.replace('-', '')
+                        desc, sequence = lines[0], lines[1]
+                        path_sequence_dict[root_dir] = sequence.replace('-', '')
                     elif re.search(".sto", full_path):
-                        desc, sequence = lines[2].split()
-                        description_sequence_dict[desc] = sequence.replace('-', '')
+                        desc, sequence = lines[0].split()
+                        path_sequence_dict[root_dir] = sequence.replace('-', '')
+                        for line in lines[1:]:
+                            line_desc, line_sequence = line.split()
+                            if line_desc == desc:
+                                path_sequence_dict[root_dir] += line_sequence.replace('-', '')
                     else:
                         logging.warning("Wrong MSA format. Expected sto or a3m file extension.")
                 else:
-                    logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
+                    logging.debug(f"No precomputed MSAs found in {precomputed_msas_path}.")
 
-    if len(description_sequence_dict) == 0:
+    if len(path_sequence_dict) == 0:
         logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
-    return description_sequence_dict
+    return path_sequence_dict
 
 def copy_files(pcmsa_path, msa_output_dir, convert=False):
     known_files = ['uniref30_colabfold_envdb',
                    'small_bfd_hits',
                    'bfd_uniref_hits',
+                   'bfd_uniclust_hits',
                    'mgnify_hits',
                    'uniprot_hits',
-                   'uniref90_hits',
-                   'pdb_hits']
+                   'uniref90_hits']
     logging.info(f"Precomputed MSAs path: {pcmsa_path}.")
     for f in os.listdir(pcmsa_path):
         if any([re.search(kf, f) for kf in known_files]):
@@ -240,13 +248,10 @@ def slice_msa(msa_file, input_sequence):
     sequence = first_record.seq
     #Record residue indices (excluding gaps and insertions)
     res_indices = [i for i, res in enumerate(sequence) if res != '-' and not res.islower()]
-    #print(res_indices)
-    #Remove gaps (-) to get continues sequence
+    #Remove gaps (-) to get contiguous sequence
     seq_reduced = str(sequence).replace('-', '')
-    #print(seq_reduced)
-    # Remove insertions (lowercase in case of a3m) to get continues sequence
+    # Remove insertions (lowercase in case of a3m) to get contiguous sequence
     seq_reduced = seq_reduced.translate(remove_lowercase)
-    #print(seq_reduced)
     match_indices = [(m.start(0), m.end(0)) for m in re.finditer(input_sequence, str(seq_reduced))]
     #Get start and end indices for the subsequence slice
     if len(match_indices) > 0:
@@ -256,7 +261,6 @@ def slice_msa(msa_file, input_sequence):
     else:
         logging.debug(f"{input_sequence} is not a subsequence of {seq_reduced}")
     logging.debug(f"Start index {full_sequence_start}, End index {full_sequence_end}")
-    #print(align)
     if not full_sequence_start is None and not full_sequence_end is None:
         # if format == 'stockholm':
         #     #Only keep columns that correspond to subsequence
@@ -278,15 +282,9 @@ def slice_msa(msa_file, input_sequence):
                     non_insertions_i = non_insertions_i[full_sequence_start:full_sequence_end + 1]
                     #Slice sequence indices (excluding insertions)
                     non_insertions_res = non_insertions_res[full_sequence_start:full_sequence_end + 1]
-                    #print(non_insertions_i)
-                    #print(non_insertions_res)
                     #Get insertions that are within the slice range
                     insertions = [(item[0], item[1]) for item in insertions
                                   if item[0] >= non_insertions_i[0] and item[0] <= non_insertions_i[-1]]
-
-                    #if len(insertions) > 0:
-                        #print("Insertions after column removal")
-                        #print(insertions)
                     insertions_added = []
                     #Re-add insertions that are within the slice
                     for i, res in enumerate(non_insertions_res):
@@ -298,7 +296,6 @@ def slice_msa(msa_file, input_sequence):
                         insertions_added.append(res)
                         for insertion_index, insertion_res in insertions:
                             if insertion_index > index and insertion_index < next_index:
-                                #print(f"Insertion index {insertion_index} is larger than {index} and smaller than {next_index}")
                                 insertions_added.append(insertion_res)
                     record.seq = Seq.Seq(''.join(insertions_added))
                     SeqIO.write(record, f, format)
@@ -324,42 +321,34 @@ def get_precomputed_msas_path(precomputed_msas_path):
 
 
 def get_pcmsa_map(precomputed_msas_path, new_map):
-    precomputed_msas_path = get_precomputed_msas_path(precomputed_msas_path)
-    precomputed_chain_id_map = os.path.join(precomputed_msas_path, 'chain_id_map.json')
+    #precomputed_msas_path = get_precomputed_msas_path(precomputed_msas_path)
 
-    if os.path.exists(precomputed_chain_id_map):
-        with open(precomputed_chain_id_map, 'r') as f:
-            prev_map = json.load(f)
-    else:
-        prev_map = create_precomputed_msas_mapping(precomputed_msas_path)
+    prev_map = create_precomputed_msas_mapping(precomputed_msas_path)
 
     pcmsa_map = {}
     #key = new chain_id or description
     #value = new mapping or sequence
     for key, value in new_map.items():
-        #key = previous chain or description
-        #value = previous mapping or sequence
-        for prev_key, prev_value in prev_map.items():
-            if hasattr(prev_value, 'sequence'):
-                prev_sequence = prev_value.sequence
-            elif 'sequence' in prev_value:
-                prev_sequence = prev_value['sequence']
-            else:
-                prev_sequence = prev_value
-            prev_folder_name = prev_key
+        #key = previous msas path
+        #value = previous sequence
+        for prev_msas_path, prev_sequence in prev_map.items():
             if hasattr(value, 'sequence'):
                 sequence = value.sequence
             else:
                 sequence = value
+            logging.debug(f"Comparing new sequence {list(sequence)} with previous sequence {list(prev_sequence)}")
             if re.search(sequence, prev_sequence):
                 #Check if previous job was monomer job
-                if any([re.search('uniref90_hits', f) for f in os.listdir(precomputed_msas_path)]):
-                    prev_msa_dir = precomputed_msas_path
-                elif prev_folder_name in os.listdir(precomputed_msas_path):
-                    prev_msa_dir = os.path.join(precomputed_msas_path, prev_folder_name)
-                else:
-                    raise ValueError("No MSAs found in precomputed_msas_path.")
-                pcmsa_map[key] = prev_msa_dir
+                # if any([re.search('uniref90_hits', f) for f in os.listdir(precomputed_msas_path)]):
+                #     prev_msa_dir = precomputed_msas_path
+                # elif prev_folder_name in os.listdir(precomputed_msas_path):
+                #     prev_msa_dir = os.path.join(precomputed_msas_path, prev_folder_name)
+                # else:
+                #     raise ValueError(f"No MSAs found in precomputed_msas_path: {precomputed_msas_path}. Expected folder: {prev_folder_name}.")
+                pcmsa_map[key] = prev_msas_path
+
+    if len(pcmsa_map) == 0:
+        logging.warning("Could not find any matching precomputed MSA.")
 
     return pcmsa_map
 
@@ -375,6 +364,7 @@ class DataPipeline:
                mgnify_database_path: str,
                bfd_database_path: Optional[str],
                uniref30_database_path: Optional[str],
+               uniref30_mmseqs_database_path: Optional[str],
                small_bfd_database_path: Optional[str],
                colabfold_envdb_database_path: str,
                template_searcher: TemplateSearcher,
@@ -398,7 +388,7 @@ class DataPipeline:
           binary_path=jackhmmer_binary_path,
           database_path=small_bfd_database_path,
           custom_tempdir=custom_tempdir)
-    else:
+    elif not self._use_mmseqs and not use_small_bfd:
       self.hhblits_bfd_uniref_runner = hhblits.HHBlits(
           binary_path=hhblits_binary_path,
           databases=[bfd_database_path, uniref30_database_path],
@@ -407,10 +397,11 @@ class DataPipeline:
         binary_path=jackhmmer_binary_path,
         database_path=mgnify_database_path,
         custom_tempdir=custom_tempdir)
-    self.mmseqs_runner = mmseqs.MMSeqs(
-        binary_path=mmseqs_binary_path,
-        database_path=[uniref30_database_path, colabfold_envdb_database_path],
-        custom_tempdir=custom_tempdir)
+    if self._use_mmseqs:
+        self.mmseqs_runner = mmseqs.MMSeqs(
+            binary_path=mmseqs_binary_path,
+            database_path=[uniref30_mmseqs_database_path, colabfold_envdb_database_path],
+            custom_tempdir=custom_tempdir)
     self.template_searcher = template_searcher
     self.template_featurizer = template_featurizer
     self.mgnify_max_hits = mgnify_max_hits
@@ -485,19 +476,22 @@ class DataPipeline:
                             'small_bfd_hits.a3m',
                             'uniref90_hits.a3m',
                             'bfd_uniref_hits.a3m',
-                            'mgnify_hits.a3m']:
+                            'mgnify_hits.a3m',
+                            'uniprot_hits.a3m']:
                     msa_file = os.path.join(msa_output_dir, msa_file)
                     if os.path.exists(msa_file):
+                        logging.info(f"Removing columns from {msa_file}.")
                         slice_msa(msa_file, input_sequence)
             else:
                 copy_files(precomputed_msas, msa_output_dir, convert=False)
                 logging.debug("Not a subsequence.")
-    self.mmseqs_runner.n_cpu = mmseqs_cpu
+    if self._use_mmseqs:
+        self.mmseqs_runner.n_cpu = mmseqs_cpu
     self.jackhmmer_uniref90_runner.n_cpu = tool_cpu
     self.jackhmmer_mgnify_runner.n_cpu = tool_cpu
     if self._use_small_bfd:
         self.jackhmmer_small_bfd_runner.n_cpu = tool_cpu
-    else:
+    elif not self._use_mmseqs and not self._use_small_bfd:
         self.hhblits_bfd_uniref_runner.n_cpu = tool_cpu
     logging.info(f"No MSA: {no_msa}; No Templates: {no_template}; Custom Template {custom_template}; Precomputed MSAs {precomputed_msas}")
     if isinstance(no_msa, list):
@@ -543,6 +537,9 @@ class DataPipeline:
 
             else:
                 bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniref_hits.a3m')
+                #In AF versions < 2.3 uniclust database was used. This allows backward compatibility when using precomputed MSAs.
+                if os.path.exists(os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')):
+                    bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
                 msa_jobs.append((
                     self.hhblits_bfd_uniref_runner,
                     input_fasta_path,
@@ -636,7 +633,7 @@ class DataPipeline:
             pdb_templates_result = template_searcher.query(template_sequence, uniref90_msa_as_a3m)
 
             self.template_featurizer_initial = deepcopy(self.template_featurizer)
-            self.template_featurizer = templates.HhsearchHitFeaturizer(
+            self.template_featurizer_custom = templates.HhsearchHitFeaturizer(
                 mmcif_dir=os.path.dirname(custom_template),
                 max_template_date=self.template_featurizer_initial._max_template_date.strftime("%Y-%m-%d"),
                 max_hits=self.template_featurizer_initial._max_hits,
@@ -700,10 +697,16 @@ class DataPipeline:
         with open(template_result_out, 'rb') as f:
             templates_result = pickle.load(f)
     else:
-        logging.info("Getting template from pdb hits or custom file.")
-        templates_result = self.template_featurizer.get_templates(
-            query_sequence=input_sequence,
-            hits=pdb_template_hits)
+        if not custom_template is None:
+            logging.info("Getting template from custom file.")
+            templates_result = self.template_featurizer_custom.get_templates(
+                query_sequence=input_sequence,
+                hits=pdb_template_hits)
+        else:
+            logging.info("Getting template from pdb hits.")
+            templates_result = self.template_featurizer.get_templates(
+                query_sequence=input_sequence,
+                hits=pdb_template_hits)
         with open(template_result_out, 'wb') as f:
             pickle.dump(templates_result, f)
 

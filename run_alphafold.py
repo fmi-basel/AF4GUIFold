@@ -51,14 +51,7 @@ import gzip
 from alphafold.model import data
 # Internal import (7716).
 
-logging.set_verbosity(logging.DEBUG)
-
-flags.DEFINE_list(
-    'fasta_paths', None, 'Paths to FASTA files, each containing a prediction '
-    'target that will be folded one after another. If a FASTA file contains '
-    'multiple sequences, then it will be folded as a multimer. Paths should be '
-    'separated by commas. All FASTA paths must have a unique basename as the '
-    'basename is used to name the output directories for each prediction.')
+logging.set_verbosity(logging.INFO)
 
 flags.DEFINE_string('fasta_path', None, 'Path to a single fasta file.')
 flags.DEFINE_string('data_dir', None, 'Path to directory of supporting data.')
@@ -92,6 +85,8 @@ flags.DEFINE_string('small_bfd_database_path', None, 'Path to the small '
                     'version of BFD used with the "reduced_dbs" preset.')
 flags.DEFINE_string('uniref30_database_path', None, 'Path to the UniRef30 '
                     'database for use by HHblits.')
+flags.DEFINE_string('uniref30_mmseqs_database_path', None, 'Path to the UniRef30 '
+                                                    'database for use by MMseqs.')
 flags.DEFINE_string('uniprot_database_path', None, 'Path to the Uniprot '
                     'database for use by JackHMMer.')
 flags.DEFINE_string('pdb70_database_path', None, 'Path to the PDB70 '
@@ -137,12 +132,12 @@ flags.DEFINE_boolean('use_precomputed_msas', False, 'Whether to read MSAs that '
                      'runs that are to reuse the MSAs. WARNING: This will not '
                      'check if the sequence, database or configuration have '
                      'changed.')
-flags.DEFINE_boolean('run_relax', True, 'Whether to run the final relaxation '
+flags.DEFINE_boolean('run_relax', False, 'Whether to run the final relaxation '
                      'step on the predicted models. Turning relax off might '
                      'result in predictions with distracting stereochemical '
                      'violations but might help in case you are having issues '
                      'with the relaxation stage.')
-flags.DEFINE_boolean('use_gpu_relax', True, 'Whether to relax on GPU. '
+flags.DEFINE_boolean('use_gpu_relax', False, 'Whether to relax on GPU. '
                      'Relax on GPU can be much faster than CPU, so it is '
                      'recommended to enable if possible. GPUs must be available'
                      ' if this setting is enabled.')
@@ -375,6 +370,9 @@ def main(argv):
     raise app.UsageError('Too many command-line arguments.')
   if FLAGS.pipeline == 'continue_from_msas':
     FLAGS.use_precomputed_msas = True
+  if not FLAGS.precomputed_msas_path in ['None', None] or any([not item in ('None', None) for item in FLAGS.precomputed_msas_list]):
+      FLAGS.use_precomputed_msas = True
+
   #Do not check for MSA tools when MSA already exists.
   run_multimer_system = 'multimer' in FLAGS.model_preset
   use_small_bfd = FLAGS.db_preset == 'reduced_dbs'
@@ -396,16 +394,16 @@ def main(argv):
       _check_flag('bfd_database_path', 'db_preset',
                   should_be_set=not use_small_bfd)
       _check_flag('uniref30_database_path', 'db_preset',
-                  should_be_set=not use_small_bfd)
+                  should_be_set=not use_small_bfd and not use_mmseqs)
       _check_flag('pdb70_database_path', 'model_preset',
                   should_be_set=not run_multimer_system)
       _check_flag('pdb_seqres_database_path', 'model_preset',
                   should_be_set=run_multimer_system)
       _check_flag('uniprot_database_path', 'model_preset',
                   should_be_set=run_multimer_system)
-      _check_flag('uniref30_database_path', 'db_preset',
-                  should_be_set=use_mmseqs)
       _check_flag('colabfold_envdb_database_path', 'db_preset',
+                  should_be_set=use_mmseqs)
+      _check_flag('uniref30_mmseqs_database_path', 'db_preset',
                   should_be_set=use_mmseqs)
 
   if FLAGS.model_preset == 'monomer_casp14':
@@ -421,7 +419,8 @@ def main(argv):
         binary_path=FLAGS.hmmsearch_binary_path,
         hmmbuild_binary_path=FLAGS.hmmbuild_binary_path,
         hhalign_binary_path=FLAGS.hhalign_binary_path,
-        database_path=FLAGS.pdb_seqres_database_path)
+        database_path=FLAGS.pdb_seqres_database_path,
+        custom_tempdir=FLAGS.custom_tempdir)
     template_featurizer = templates.HmmsearchHitFeaturizer(
         mmcif_dir=FLAGS.template_mmcif_dir,
         max_template_date=FLAGS.max_template_date,
@@ -455,8 +454,8 @@ def main(argv):
       mgnify_database_path=FLAGS.mgnify_database_path,
       bfd_database_path=FLAGS.bfd_database_path,
       uniref30_database_path=FLAGS.uniref30_database_path,
+      uniref30_mmseqs_database_path=FLAGS.uniref30_mmseqs_database_path,
       small_bfd_database_path=FLAGS.small_bfd_database_path,
-      uniref30_database_path=FLAGS.uniref30_database_path,
       colabfold_envdb_database_path=FLAGS.colabfold_envdb_database_path,
       template_searcher=template_searcher,
       template_featurizer=template_featurizer,

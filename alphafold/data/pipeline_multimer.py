@@ -248,19 +248,26 @@ class DataPipeline:
   def _all_seq_msa_features(self, input_fasta_path, msa_output_dir, num_cpu):
     """Get MSA features for unclustered uniprot, for pairing."""
     out_path = os.path.join(msa_output_dir, 'uniprot_hits.sto')
+    out_path_a3m = os.path.join(msa_output_dir, 'uniprot_hits.a3m')
     self._uniprot_msa_runner.n_cpu = num_cpu
-    if not os.path.exists(out_path):
+    if not os.path.exists(out_path) and not os.path.exists(out_path_a3m):
         result = pipeline.run_msa_tool(
             self._uniprot_msa_runner, input_fasta_path, out_path, 'sto',
             self.use_precomputed_msas)
         with open(out_path, 'w') as f:
             f.write(result['sto'])
-    else:
+    if os.path.exists(out_path_a3m) and not os.path.exists(out_path):
+        with open(out_path_a3m, 'r') as f:
+            a3m = f.read()
+        result = dict(a3m=a3m)
+        msa = parsers.parse_a3m(result['a3m'])
+    elif os.path.exists(out_path):
         with open(out_path, 'r') as f:
             sto = f.read()
         result = dict(sto=sto)
-
-    msa = parsers.parse_stockholm(result['sto'])
+        msa = parsers.parse_stockholm(result['sto'])
+    else:
+        raise ValueError("uniprot_hits msa file not found.")
     msa = msa.truncate(max_seqs=self._max_uniprot_hits)
     all_seq_features = pipeline.make_msa_features([msa])
     valid_feats = msa_pairing.MSA_FEATURES + (
@@ -288,9 +295,6 @@ class DataPipeline:
         pcmsa_map = pipeline.get_pcmsa_map(self.precomputed_msas_path, chain_id_map)
     else:
         pcmsa_map = {}
-
-
-
 
 
     chain_id_map_path = os.path.join(msa_output_dir, 'chain_id_map.json')
