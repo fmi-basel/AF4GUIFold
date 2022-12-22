@@ -168,6 +168,7 @@ flags.DEFINE_enum('pipeline', 'full', [
                 'calculate MSAs and find templates for given batch of sequences, ignore monomer/multimer preset (batch features) or'
                 'continue from precalculated MSAs (continue_from_msas) or '
                 'continue from features.pkl file (continue_from_features)')
+flags.DEFINE_boolean('debug', False, 'Enable debugging output.')
 
 FLAGS = flags.FLAGS
 
@@ -368,6 +369,10 @@ def parse_fasta(fasta_path):
 def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
+  if FLAGS.debug:
+      logging.set_verbosity(logging.DEBUG)
+  else:
+      logging.set_verbosity(logging.INFO)
   if FLAGS.pipeline == 'continue_from_msas':
     FLAGS.use_precomputed_msas = True
   if not FLAGS.precomputed_msas_path in ['None', None] or any([not item in ('None', None) for item in FLAGS.precomputed_msas_list]):

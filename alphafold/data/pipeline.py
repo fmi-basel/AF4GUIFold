@@ -46,6 +46,7 @@ import re
 import json
 from shutil import copyfile
 import gzip
+import traceback
 
 # Internal import (7716).
 
@@ -253,13 +254,19 @@ def slice_msa(msa_file, input_sequence):
     # Remove insertions (lowercase in case of a3m) to get contiguous sequence
     seq_reduced = seq_reduced.translate(remove_lowercase)
     match_indices = [(m.start(0), m.end(0)) for m in re.finditer(input_sequence, str(seq_reduced))]
+    logging.debug("Match indices:")
+    logging.debug(match_indices)
+    logging.debug(res_indices)
     #Get start and end indices for the subsequence slice
     if len(match_indices) > 0:
         first_match_indices = match_indices[0]
-        full_sequence_start = res_indices[first_match_indices[0]]
-        full_sequence_end = res_indices[first_match_indices[1]] - 1
+        try:
+            full_sequence_start = res_indices[first_match_indices[0]]
+            full_sequence_end = res_indices[first_match_indices[1] - 1]
+        except IndexError:
+            raise ValueError(f"Could not determine start and end for the subsequence {input_sequence} of {seq_reduced}")
     else:
-        logging.debug(f"{input_sequence} is not a subsequence of {seq_reduced}")
+        logging.warning(f"{input_sequence} is not a subsequence of {seq_reduced}")
     logging.debug(f"Start index {full_sequence_start}, End index {full_sequence_end}")
     if not full_sequence_start is None and not full_sequence_end is None:
         # if format == 'stockholm':
@@ -573,9 +580,15 @@ class DataPipeline:
             try:
                 results = pool.starmap_async(run_msa_tool, msa_jobs)
                 msa_jobs_results = results.get()
-            except KeyboardInterrupt:
+            except KeyboardInterrupt as e:
                 pool.terminate()
                 pool.join()
+                raise e
+            except Exception as e:
+                pool.terminate()
+                pool.join()
+                logging.error(traceback.print_exc())
+                raise e
 
     if not no_msa:
         if self._use_mmseqs:
