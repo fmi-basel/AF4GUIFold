@@ -161,12 +161,11 @@ flags.DEFINE_integer('num_cpus', 1, 'Number of CPUs to use for feature generatio
 flags.DEFINE_string('precomputed_msas_path', None, 'Path to a directory with precomputed MSAs (job_dir/msas)')
 #flags.DEFINE_boolean('batch_msas', False, 'Runs the monomer feature pipeline for all sequences in the input MSA file.')
 flags.DEFINE_enum('pipeline', 'full', [
-                'full', 'only_features', 'batch_msas', 'continue_from_msas', 'continue_from_features'],
+                'full', 'only_features', 'batch_msas', 'continue_from_features'],
                 'Choose preset pipeline configuration - '
                 'full pipeline or '
                 'stop after feature generation (only features) or '
                 'calculate MSAs and find templates for given batch of sequences, ignore monomer/multimer preset (batch features) or'
-                'continue from precalculated MSAs (continue_from_msas) or '
                 'continue from features.pkl file (continue_from_features)')
 flags.DEFINE_boolean('debug', False, 'Enable debugging output.')
 
@@ -373,8 +372,6 @@ def main(argv):
       logging.set_verbosity(logging.DEBUG)
   else:
       logging.set_verbosity(logging.INFO)
-  if FLAGS.pipeline == 'continue_from_msas':
-    FLAGS.use_precomputed_msas = True
   if not FLAGS.precomputed_msas_path in ['None', None] or any([not item in ('None', None) for item in FLAGS.precomputed_msas_list]):
       FLAGS.use_precomputed_msas = True
 
@@ -385,7 +382,7 @@ def main(argv):
   if FLAGS.precomputed_msas_path and FLAGS.precomputed_msas_list:
       logging.warning("Flags --precomputed_msas_path and --precomputed_msas_list selected at the same time."
                       "MSAs from --precomputed_msas_list get priority over MSAs from --precomputed_msas_path.")
-  if not FLAGS.pipeline == 'continue_from_msas' and not FLAGS.pipeline == 'continue_from_features':
+  if not FLAGS.pipeline == 'continue_from_features':
       for tool_name in (
           'jackhmmer', 'hhblits', 'hhsearch', 'hmmsearch', 'hmmbuild', 'kalign'):
         if not FLAGS[f'{tool_name}_binary_path'].value:
