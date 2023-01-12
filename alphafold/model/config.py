@@ -392,6 +392,7 @@ CONFIG = ml_collections.ConfigDict({
             'subbatch_size': 4,
             'use_remat': False,
             'zero_init': True,
+            'eval_dropout': False,
         },
         'heads': {
             'distogram': {
@@ -625,6 +626,7 @@ CONFIG_MULTIMER = ml_collections.ConfigDict({
             'subbatch_size': 4,
             'use_remat': False,
             'zero_init': True,
+            'eval_dropout': False,
         },
         'heads': {
             'distogram': {
