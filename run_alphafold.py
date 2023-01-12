@@ -372,6 +372,8 @@ def main(argv):
       logging.set_verbosity(logging.DEBUG)
   else:
       logging.set_verbosity(logging.INFO)
+  if FLAGS.precomputed_msas_list is None:
+      FLAGS.precomputed_msas_list = [FLAGS.precomputed_msas_list]
   if not FLAGS.precomputed_msas_path in ['None', None] or any([not item in ('None', None) for item in FLAGS.precomputed_msas_list]):
       FLAGS.use_precomputed_msas = True
 
@@ -380,7 +382,7 @@ def main(argv):
   use_small_bfd = FLAGS.db_preset == 'reduced_dbs'
   use_mmseqs = FLAGS.db_preset == 'colabfold'
   if FLAGS.precomputed_msas_path and FLAGS.precomputed_msas_list:
-      logging.warning("Flags --precomputed_msas_path and --precomputed_msas_list selected at the same time."
+      logging.warning("Flags --precomputed_msas_path and --precomputed_msas_list selected at the same time. "
                       "MSAs from --precomputed_msas_list get priority over MSAs from --precomputed_msas_path.")
   if not FLAGS.pipeline == 'continue_from_features':
       for tool_name in (
@@ -579,16 +581,19 @@ def main(argv):
   else:
       precomputed_msas_list = [None] * len(description_sequence_dict)
 
+  #Find matching MSAs in case of monomer pipeline. In case of multimer pipeline this is done in pipeline_multimer.py
   if not run_multimer_system and not FLAGS.pipeline == 'batch_msas' and FLAGS.precomputed_msas_path:
-      pcmsa_map = pipeline.get_pcmsa_map(FLAGS.precomputed_msas_path,
-                                                             description_sequence_dict)
-      logging.info("Precomputed MSAs map")
-      logging.info(pcmsa_map)
-      if len(pcmsa_map) > 0:
-          precomputed_msas_list = list(pcmsa_map.values())[0]
-      elif len(pcmsa_map) > 1:
-          logging.warning("Found more than one precomputed MSA for given sequence. Will use the first one in the list.")
-          precomputed_msas_list = list(pcmsa_map.values())[0]
+      #Only search for MSAs in precomputed_msas_path if no direct path is given in precomputed_msas_list
+      if precomputed_msas_list[0] in [None, "None", "none"]:
+          pcmsa_map = pipeline.get_pcmsa_map(FLAGS.precomputed_msas_path,
+                                                                 description_sequence_dict)
+          logging.info("Precomputed MSAs map")
+          logging.info(pcmsa_map)
+          if len(pcmsa_map) == 1:
+              precomputed_msas_list = list(pcmsa_map.values())[0]
+          elif len(pcmsa_map) > 1:
+              logging.warning("Found more than one precomputed MSA for given sequence. Will use the first one in the list.")
+              precomputed_msas_list = list(pcmsa_map.values())[0]
   elif FLAGS.pipeline == 'batch_msas' and FLAGS.precomputed_msas_path:
       logging.warning("Precomputed MSAs will not be copied when running batch features.")
 

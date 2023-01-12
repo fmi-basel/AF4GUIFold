@@ -146,15 +146,19 @@ def create_precomputed_msas_mapping(precomputed_msas_path):
                     with open(full_path) as f:
                         lines = [line for line in f.readlines() if not line.startswith(('#', '\n', '//'))]
 
-                    if len(lines) > 0:
-                        desc, sequence = lines[0].split()
-                        path_sequence_dict[root_dir] = sequence.replace('-', '')
-                        for line in lines[1:]:
-                            line_desc, line_sequence = line.split()
-                            if line_desc == desc:
-                                path_sequence_dict[root_dir] += line_sequence.replace('-', '')
-                    else:
-                        logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
+                    # if len(lines) > 0:
+                    #     split_line = lines[0].split()
+                    #     if len(split_line) == 2:
+                    #         desc, sequence = lines[0].split()
+                    #         path_sequence_dict[root_dir] = sequence.replace('-', '')
+                    #         for line in lines[1:]:
+                    #             line_desc, line_sequence = line.split()
+                    #             if line_desc == desc:
+                    #                 path_sequence_dict[root_dir] += line_sequence.replace('-', '')
+                    #     else:
+                    #         logging.warning(f"Wrong format in file {full_path} and line {lines[0]}. Cannot use as precomputed MSA.")
+                    # else:
+                    #     logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
                 elif full_path.endswith(".gz"):
                     with gzip.open(full_path, 'rb') as f:
                         c = f.read()
@@ -162,16 +166,23 @@ def create_precomputed_msas_mapping(precomputed_msas_path):
                     lines = [line for line in c.splitlines() if not line.startswith(('#', '\n', '//')) and line]
 
                 if len(lines) > 0:
+                    split_line = lines[0].split()
                     if re.search(".a3m", full_path):
-                        desc, sequence = lines[0], lines[1]
-                        path_sequence_dict[root_dir] = sequence.replace('-', '')
+                        if lines[0].startswith('>'):
+                            desc, sequence = lines[0], lines[1]
+                            path_sequence_dict[root_dir] = sequence.replace('-', '')
+                        else:
+                            logging.warning(f"Wrong format in file {full_path} and line {lines[0]}. Cannot use as precomputed MSA.")
                     elif re.search(".sto", full_path):
-                        desc, sequence = lines[0].split()
-                        path_sequence_dict[root_dir] = sequence.replace('-', '')
-                        for line in lines[1:]:
-                            line_desc, line_sequence = line.split()
-                            if line_desc == desc:
-                                path_sequence_dict[root_dir] += line_sequence.replace('-', '')
+                        if len(split_line) == 2:
+                            desc, sequence = lines[0].split()
+                            path_sequence_dict[root_dir] = sequence.replace('-', '')
+                            for line in lines[1:]:
+                                line_desc, line_sequence = line.split()
+                                if line_desc == desc:
+                                    path_sequence_dict[root_dir] += line_sequence.replace('-', '')
+                        else:
+                            logging.warning(f"Wrong format in file {full_path} and line {lines[0]}. Cannot use as precomputed MSA.")
                     else:
                         logging.warning("Wrong MSA format. Expected sto or a3m file extension.")
                 else:

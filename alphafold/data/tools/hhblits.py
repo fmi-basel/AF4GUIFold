@@ -114,6 +114,7 @@ class HHBlits:
           '-cpu', str(self.n_cpu),
           '-oa3m', a3m_path,
           '-o', '/dev/null',
+          '-maxres 100000',
           '-n', str(self.n_iter),
           '-e', str(self.e_value),
           '-maxseq', str(self.maxseq),
