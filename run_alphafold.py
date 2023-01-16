@@ -157,7 +157,7 @@ flags.DEFINE_integer('num_recycle', 3, 'Define maximum number of model recycles.
 #flags.DEFINE_bool('only_features', False, 'Stop after Feature pipeline. Useful for splitting up the job into CPU and GPU resources.')
 #flags.DEFINE_bool('continue_from_features', False, 'Continue from features.pkl file.'
 #                                                   ' Useful for splitting up the job into CPU and GPU resources.')
-flags.DEFINE_integer('num_cpus', 1, 'Number of CPUs to use for feature generation.')
+flags.DEFINE_integer('num_cpu', 1, 'Number of CPUs to use for feature generation.')
 flags.DEFINE_string('precomputed_msas_path', None, 'Path to a directory with precomputed MSAs (job_dir/msas)')
 #flags.DEFINE_boolean('batch_msas', False, 'Runs the monomer feature pipeline for all sequences in the input MSA file.')
 flags.DEFINE_enum('pipeline', 'full', [
@@ -222,7 +222,7 @@ def predict_structure(
             no_template=no_template_list,
             custom_template=custom_template_list,
             precomputed_msas=precomputed_msas_list,
-            num_cpu=FLAGS.num_cpus)
+            num_cpu=FLAGS.num_cpu)
       timings['features'] = time.time() - t_0
 
 
