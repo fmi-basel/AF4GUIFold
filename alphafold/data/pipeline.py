@@ -199,7 +199,8 @@ def copy_files(pcmsa_path, msa_output_dir, convert=False):
                    'bfd_uniclust_hits',
                    'mgnify_hits',
                    'uniprot_hits',
-                   'uniref90_hits']
+                   'uniref90_hits',
+                   'template_results']
     logging.info(f"Precomputed MSAs path: {pcmsa_path}.")
     for f in os.listdir(pcmsa_path):
         if any([re.search(kf, f) for kf in known_files]):
@@ -479,6 +480,7 @@ class DataPipeline:
     input_description = input_descs[0]
     num_res = len(input_sequence)
 
+    reprocess_templates = False
     if precomputed_msas:
         if isinstance(precomputed_msas, list):
             if len(precomputed_msas) > 1:
@@ -488,6 +490,7 @@ class DataPipeline:
         if not precomputed_msas in [None, "None", "none"]:
             if is_subsequence(input_sequence, precomputed_msas):
                 #is_subsequence(input_sequence, precomputed_msas)
+                reprocess_templates = True
                 copy_files(precomputed_msas, msa_output_dir, convert=True)
                 logging.info("Input sequence is a subsequence of provided MSAs. MSAs will be cropped.")
                 for msa_file in ['uniref30_colabfold_envdb.a3m',
@@ -502,7 +505,7 @@ class DataPipeline:
                         slice_msa(msa_file, input_sequence)
             else:
                 copy_files(precomputed_msas, msa_output_dir, convert=False)
-                logging.debug("Not a subsequence.")
+                logging.info("Not a subsequence.")
     if self._use_mmseqs:
         self.mmseqs_runner.n_cpu = mmseqs_cpu
     self.jackhmmer_uniref90_runner.n_cpu = tool_cpu
@@ -642,6 +645,16 @@ class DataPipeline:
             uniref90_msa = parsers.parse_a3m(jackhmmer_uniref90_result['a3m'])
             msa_for_templates = jackhmmer_uniref90_result
 
+    template_result_out = os.path.join(
+        msa_output_dir, 'template_results.pkl')
+
+    use_precomputed_templates = False
+    if all([os.path.exists(template_result_out),
+        self.use_precomputed_msas,
+        not reprocess_templates,
+        not custom_template,
+        not no_template]):
+        use_precomputed_templates = True
 
     #Refactored to implement use of a single custom template
     if not custom_template is None:
@@ -671,7 +684,7 @@ class DataPipeline:
             logging.info(pdb_template_hits)
         else:
             logging.error(f"Custom template not found in {custom_template}")
-    elif not no_template:
+    elif not no_template and not use_precomputed_templates:
         logging.info("Using templates from the PDB")
         pdb_hits_out_path = os.path.join(
             msa_output_dir, f'pdb_hits.{self.template_searcher.output_format}')
@@ -685,19 +698,18 @@ class DataPipeline:
                 pdb_templates_result = self.template_searcher.query(uniref90_msa_as_a3m)
             else:
                 raise ValueError('Unrecognized template input format: '
-                                 f'{self.template_searcher.input_format}')
+                                f'{self.template_searcher.input_format}')
             with open(pdb_hits_out_path, 'w') as f:
                 f.write(pdb_templates_result)
         else:
             with open(pdb_hits_out_path, 'r') as f:
                 pdb_templates_result = f.read()
-        pdb_template_hits = self.template_searcher.get_template_hits(
-            output_string=pdb_templates_result, input_sequence=input_sequence)
+        
+            pdb_template_hits = self.template_searcher.get_template_hits(
+                output_string=pdb_templates_result, input_sequence=input_sequence)
 
 
-
-    template_result_out = os.path.join(
-        msa_output_dir, 'template_results.pkl')
+    logging.debug(f"check template.pkl: {os.path.exists(template_result_out)}, {not custom_template}, {not no_template}, {self.use_precomputed_msas}")
     if no_template:
         logging.info("Generating dummy template.")
         templates_result = TemplateSearchResult(features={
@@ -712,11 +724,7 @@ class DataPipeline:
             'template_sequence': np.array([''.encode()], dtype=np.object),
             'template_sum_probs': np.array([0], dtype=np.float32)
         }, errors=[], warnings=[])
-    elif all([os.path.exists(template_result_out),
-              #not len(input_sequence) < len(uniref90_msa.sequences[0]),
-              not custom_template,
-              not no_template,
-              self.use_precomputed_msas]):
+    elif use_precomputed_templates:
         logging.info("Opening template from pickle")
         with open(template_result_out, 'rb') as f:
             templates_result = pickle.load(f)
