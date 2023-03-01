@@ -312,9 +312,12 @@ class DataPipeline:
             sequence_features[fasta_chain.sequence])
         continue
 
+      logging.info(f"Precomputed MSA is {precomputed_msas[i]}")
       if precomputed_msas[i] in [None, "None", "none"]:
+          logging.info(f"Precomputed MSA is {precomputed_msas[i]}")
           if chain_id in pcmsa_map:
               precomputed_msas[i] = pcmsa_map[chain_id]
+      logging.info(f"Using Precomputed MSA: {precomputed_msas[i]}")
 
       chain_features = self._process_single_chain(
             chain_id=chain_id,

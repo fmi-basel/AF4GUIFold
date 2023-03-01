@@ -702,11 +702,12 @@ class DataPipeline:
             with open(pdb_hits_out_path, 'w') as f:
                 f.write(pdb_templates_result)
         else:
+            logging.info(f"Reading template hits from {pdb_hits_out_path}")
             with open(pdb_hits_out_path, 'r') as f:
                 pdb_templates_result = f.read()
         
-            pdb_template_hits = self.template_searcher.get_template_hits(
-                output_string=pdb_templates_result, input_sequence=input_sequence)
+        pdb_template_hits = self.template_searcher.get_template_hits(
+            output_string=pdb_templates_result, input_sequence=input_sequence)
 
 
     logging.debug(f"check template.pkl: {os.path.exists(template_result_out)}, {not custom_template}, {not no_template}, {self.use_precomputed_msas}")

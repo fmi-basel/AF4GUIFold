@@ -33,6 +33,7 @@ from alphafold.data import feature_processing
 from alphafold.data import msa_pairing
 from alphafold.data import parsers
 from alphafold.data import pipeline
+from alphafold.data.pipeline import run_msa_tool
 from alphafold.data.tools import jackhmmer
 import numpy as np
 import signal
@@ -67,7 +68,10 @@ class DataPipeline:
     """Runs the alignment tools and assembles the input features."""
 
     def __init__(self,
-                 monomer_data_pipeline: pipeline.DataPipeline):
+                monomer_data_pipeline: pipeline.DataPipeline, 
+                jackhmmer_binary_path: str,
+                uniprot_database_path: str,
+                max_uniprot_hits: int = 50000):
         """Initializes the data pipeline.
 
         Args:
@@ -78,6 +82,11 @@ class DataPipeline:
         self.use_precomputed_msas = self._monomer_data_pipeline.use_precomputed_msas
         self.custom_tempdir = self._monomer_data_pipeline.custom_tempdir
         self.precomputed_msas_path = self._monomer_data_pipeline.precomputed_msas_path
+
+        self._uniprot_msa_runner = jackhmmer.Jackhmmer(
+            binary_path=jackhmmer_binary_path,
+            database_path=uniprot_database_path,
+            custom_tempdir=self.custom_tempdir)
 
     def _process_single_chain(
             self,
@@ -105,6 +114,17 @@ class DataPipeline:
                 custom_template=custom_template,
                 precomputed_msas=precomputed_msas,
                 num_cpu=num_cpu)
+
+            #Also run uniprot search for multimer
+            out_path = os.path.join(msa_output_dir, 'uniprot_hits.sto')
+            out_path_a3m = os.path.join(msa_output_dir, 'uniprot_hits.a3m')
+            self._uniprot_msa_runner.n_cpu = num_cpu
+            if not os.path.exists(out_path) and not os.path.exists(out_path_a3m):
+                result = run_msa_tool(
+                    self._uniprot_msa_runner, fasta_path, out_path, 'sto',
+                    self._monomer_data_pipeline.use_precomputed_msas)
+                with open(out_path, 'w') as f:
+                    f.write(result['sto'])
 
         return features
 

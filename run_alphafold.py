@@ -470,7 +470,9 @@ def main(argv):
       precomputed_msas_path=FLAGS.precomputed_msas_path)
 
   if FLAGS.pipeline == 'batch_msas':
-      data_pipeline = pipeline_batch.DataPipeline(monomer_data_pipeline)
+      data_pipeline = pipeline_batch.DataPipeline(monomer_data_pipeline=monomer_data_pipeline, 
+        jackhmmer_binary_path=FLAGS.jackhmmer_binary_path,
+        uniprot_database_path=FLAGS.uniprot_database_path)
       num_predictions_per_model = 1
   elif run_multimer_system and not FLAGS.pipeline == 'batch_msas':
     num_predictions_per_model = FLAGS.num_multimer_predictions_per_model
