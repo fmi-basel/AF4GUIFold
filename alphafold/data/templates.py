@@ -17,12 +17,17 @@
 
 """Functions for getting templates and calculating template features."""
 import abc
+from contextlib import closing
 import dataclasses
 import datetime
 import functools
 import glob
+from multiprocessing import Pool
 import os
 import re
+import signal
+import time
+import traceback
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from absl import logging
@@ -714,12 +719,15 @@ def _process_single_hit(
 
   # Pass hit_pdb_code since it might have changed due to the pdb being obsolete.
   try:
+    t_0 = time.time()
     _assess_hhsearch_hit(
         hit=hit,
         hit_pdb_code=hit_pdb_code,
         query_sequence=query_sequence,
         release_dates=release_dates,
         release_date_cutoff=max_template_date)
+    t = time.time() - t_0
+    logging.info(f"_assess_hhsearch hit took {t}")
   except PrefilterError as e:
     if strict_error_check or isinstance(e, (DateError, AlignRatioError, LengthError)): # and isinstance(e, (DateError, DuplicateError)):
       # In strict mode we treat some prefilter cases as errors.
@@ -731,9 +739,12 @@ def _process_single_hit(
     #Outcommented since there would be empty result even if strict_error_check is False
     #return SingleHitResult(features=None, error=None, warning=None)
 
+  t_0 = time.time()
   mapping = _build_query_to_hit_index_mapping(
       hit.query, hit.hit_sequence, hit.indices_hit, hit.indices_query,
       query_sequence)
+  t = time.time() - t_0
+  logging.info(f"_build_query_to_hit_index_mapping hit took {t}")
 
   # The mapping is from the query to the actual hit sequence, so we need to
   # remove gaps (which regardless have a missing confidence score).
@@ -745,8 +756,11 @@ def _process_single_hit(
   # Fail if we can't find the mmCIF file.
   cif_string = _read_file(cif_path)
 
+  t_0 = time.time()
   parsing_result = mmcif_parsing.parse(
       file_id=hit_pdb_code, mmcif_string=cif_string)
+  t = time.time() - t_0
+  logging.info(f"_mmcif_parsing took {t}")
 
   if parsing_result.mmcif_object is not None:
     hit_release_date = datetime.datetime.strptime(
@@ -761,6 +775,7 @@ def _process_single_hit(
         return SingleHitResult(features=None, error=None, warning=None)
 
   try:
+    t_0 = time.time()
     features, realign_warning = _extract_template_features(
         mmcif_object=parsing_result.mmcif_object,
         pdb_id=hit_pdb_code,
@@ -770,6 +785,9 @@ def _process_single_hit(
         template_chain_id=hit_chain_id,
         kalign_binary_path=kalign_binary_path,
         custom_tempdir=custom_tempdir)
+    
+    t = time.time() - t_0
+    logging.info(f"_extract_template_features took {t}")
     if hit.sum_probs is None:
       features['template_sum_probs'] = [0]
     else:
@@ -788,6 +806,7 @@ def _process_single_hit(
                '%s, mmCIF parsing errors: %s'
                % (hit_pdb_code, hit_chain_id, hit.sum_probs, hit.index,
                   str(e), parsing_result.errors))
+    logging.info(warning)
     if strict_error_check:
       return SingleHitResult(features=None, error=warning, warning=None)
     else:
@@ -797,6 +816,7 @@ def _process_single_hit(
              '%s, mmCIF parsing errors: %s'
              % (hit_pdb_code, hit_chain_id, hit.sum_probs, hit.index,
                 str(e), parsing_result.errors))
+    logging.info(warning)
     return SingleHitResult(features=None, error=error, warning=None)
 
 
@@ -882,6 +902,9 @@ class TemplateHitFeaturizer(abc.ABC):
 class HhsearchHitFeaturizer(TemplateHitFeaturizer):
   """A class for turning a3m hits from hhsearch to template features."""
 
+  def init_worker(self):
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
   def get_templates(
       self,
       query_sequence: str,
@@ -897,10 +920,31 @@ class HhsearchHitFeaturizer(TemplateHitFeaturizer):
     errors = []
     warnings = []
 
-    for hit in sorted(hits, key=lambda x: x.sum_probs, reverse=True):
+    sorted_hits = sorted(hits, key=lambda x: x.sum_probs, reverse=True)
+
+    for hit in sorted_hits:
       # We got all the templates we wanted, stop processing hits.
       if num_hits >= self._max_hits:
         break
+
+    # single_hit_input = [(query_sequence, hit, self._mmcif_dir, self._max_template_date, self._release_dates, self._obsolete_pdbs, self._strict_error_check, self._kalign_binary_path, self._custom_tempdir) for hit in sorted_hits]
+
+    # with closing(Pool(20, self.init_worker)) as pool:
+    #     try:
+    #         result = pool.starmap_async(_process_single_hit, single_hit_input)
+    #         results = result.get()
+    #     except KeyboardInterrupt as e:
+    #         pool.terminate()
+    #         pool.join()
+    #         raise e
+    #     except Exception as e:
+    #         pool.terminate()
+    #         pool.join()
+    #         logging.error(traceback.print_exc())
+    #         raise e
+
+    # for result in results:
+
 
       result = _process_single_hit(
           query_sequence=query_sequence,
@@ -945,6 +989,9 @@ class HhsearchHitFeaturizer(TemplateHitFeaturizer):
 class HmmsearchHitFeaturizer(TemplateHitFeaturizer):
   """A class for turning a3m hits from hmmsearch to template features."""
 
+  def init_worker(self):
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
   def get_templates(
       self,
       query_sequence: str,
@@ -969,7 +1016,24 @@ class HmmsearchHitFeaturizer(TemplateHitFeaturizer):
       # We got all the templates we wanted, stop processing hits.
       if len(already_seen) >= self._max_hits:
         break
+    
+    # single_hit_input = [(query_sequence, hit, self._mmcif_dir, self._max_template_date, self._release_dates, self._obsolete_pdbs, self._strict_error_check, self._kalign_binary_path, self._custom_tempdir) for hit in sorted_hits]
 
+    # with closing(Pool(20, self.init_worker)) as pool:
+    #     try:
+    #         result = pool.starmap_async(_process_single_hit, single_hit_input)
+    #         results = result.get()
+    #     except KeyboardInterrupt as e:
+    #         pool.terminate()
+    #         pool.join()
+    #         raise e
+    #     except Exception as e:
+    #         pool.terminate()
+    #         pool.join()
+    #         logging.error(traceback.print_exc())
+    #         raise e
+
+    # for result in results:
       result = _process_single_hit(
           query_sequence=query_sequence,
           hit=hit,

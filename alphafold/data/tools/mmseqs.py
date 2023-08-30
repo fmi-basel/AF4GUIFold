@@ -14,19 +14,27 @@
 #
 # Author: Georg Kempf, Friedrich Miescher Institute for Biomedical Research
 # MMSeqs workflow and parameters adapted from https://github.com/sokrypton/ColabFold (https://doi.org/10.5281/zenodo.5123296)
+# MMSeqsAPI adapted from https://github.com/sokrypton/ColabFold (https://doi.org/10.5281/zenodo.5123296)
 
 """Library to run MMSeqs from Python."""
 
 import glob
 import os
+import random
+import re
 import subprocess
+import tarfile
+import time
 from typing import Any, List, Mapping, Optional, Sequence
 import math
 from shutil import copy, rmtree
 from contextlib import contextmanager
-from absl import logging
-from alphafold.data.tools import utils
 
+from numpy import extract
+from absl import logging
+import requests
+from alphafold.data.tools import utils
+from alphafold.data.parsers import parse_fasta
 
 class MMSeqs:
     """Python wrapper of the MMSeqs2 workflow."""
@@ -349,6 +357,220 @@ class MMSeqs:
         stdout = '\n'.join(stdout_list)
         stderr = '\n'.join(stderr_list)
 
+        raw_output = dict(
+            a3m=a3m,
+            output=stdout,
+            stderr=stderr)
+        return [raw_output]
+    
+
+class MMSeqsAPI:
+    """Adapted from https://github.com/sokrypton/ColabFold (https://doi.org/10.5281/zenodo.5123296)"""
+    def __init__(self,
+                 *,
+                 host_url="https://api.colabfold.com",
+                 custom_tempdir=None):
+        self.host_url = host_url
+        self.submission_endpoint = "ticket/msa"
+        self.stdout_list, self.stderr_list = [], []
+        self.custom_tempdir = custom_tempdir
+
+    def submit(self, seqs: List[str], mode: str = 'env', seq_name: int = 101):
+        query = "\n".join([f">{seq_name}\n{seq}" for seq_name, seq in enumerate(seqs, seq_name)])
+        error_count = 0
+        logging.info(f"Submitting {query} to Colabfold MSA server...")
+
+        while True:
+            try:
+                res = requests.post(f'{self.host_url}/{self.submission_endpoint}', data={'q': query, 'mode': mode}, timeout=6.02)
+                res.raise_for_status()
+                break
+            except requests.exceptions.Timeout:
+                warn_msg = "Timeout while submitting to MSA server. Retrying..."
+                self.stdout_list.append(warn_msg)
+                logging.warning(warn_msg)
+            except Exception as e:
+                error_count += 1
+                warn_msg = f"Error while fetching result from MSA server. Retrying... ({error_count}/5)"
+                self.stdout_list.append(warn_msg)
+                logging.warning(warn_msg)
+                warn_msg = f"Error: {e}"
+                self.stdout_list.append(warn_msg)
+                logging.warning(warn_msg)
+                time.sleep(5)
+                if error_count > 5:
+                    raise
+        try:
+            result = res.json()
+        except ValueError:
+            error_msg = f"Server didn't reply with JSON: {res.text}"
+            self.stderr_list.append(error_msg)
+            logging.error(error_msg)
+            result = {"status": "ERROR"}
+        return result
+    
+    def get_status(self, ID: str):
+        while True:
+            error_count = 0
+            try:
+                res = requests.get(f'{self.host_url}/ticket/{ID}', timeout=6.02)
+                res.raise_for_status()
+                break
+            except requests.exceptions.Timeout:
+                warn_msg = "Timeout while fetching status from MSA server. Retrying..."
+                self.stdout_list.append(warn_msg)
+                logging.warning(warn_msg)
+            except Exception as e:
+                error_count += 1
+                warn_msg = f"Error while fetching result from MSA server. Retrying... ({error_count}/5)"
+                self.stdout_list.append(warn_msg)
+                logging.warning(warn_msg)
+                warn_msg = f"Error: {e}"
+                self.stdout_list.append(warn_msg)
+                logging.warning(warn_msg)
+                time.sleep(5)
+                if error_count > 5:
+                    raise
+        try:
+            result = res.json()
+        except ValueError:
+            error_msg = f"Server didn't reply with JSON: {res.text}"
+            self.stderr_list.append(error_msg)
+            logging.error(error_msg)
+            result = {"status": "ERROR"}
+        return result
+    
+    def download(self, ID: str):
+        error_count = 0
+        merged_output = []
+        while True:
+            try:
+                res = requests.get(f'{self.host_url}/result/download/{ID}', timeout=6.02)
+                res.raise_for_status()
+                break
+            except requests.exceptions.Timeout:
+                warn_msg = "Timeout while fetching result from MSA server. Retrying..."
+                self.stdout_list.append(warn_msg)
+                logging.warning("Timeout while fetching result from MSA server. Retrying...")
+            except Exception as e:
+                error_count += 1
+                warn_msg = f"Error while fetching result from MSA server. Retrying... ({error_count}/5)"
+                self.stdout_list.append(warn_msg)
+                logging.warning(warn_msg)
+                warn_msg = f"Error: {e}"
+                self.stdout_list.append(warn_msg)
+                logging.warning(warn_msg)
+                time.sleep(5)
+                if error_count > 5:
+                    raise
+        with utils.tmpdir_manager(os.path.join(self.custom_tempdir)) as extract_tmp_dir:
+            temp_tar_gz = os.path.join(extract_tmp_dir, 'mmseqs2_output.tar.gz')
+            temp_tar_gz_extracted = os.path.join(extract_tmp_dir, 'mmseqs2_output')
+            with open(temp_tar_gz, 'wb') as f:
+                f.write(res.content)
+            with tarfile.open(temp_tar_gz, 'r') as tar_gz:
+                tar_gz.extractall(temp_tar_gz_extracted)
+            files = os.listdir(temp_tar_gz_extracted)
+            expected_files = ['bfd.mgnify30.metaeuk30.smag30.a3m', 'uniref.a3m']
+            if not expected_files[0] in files or not expected_files[1] in files:
+                error_msg = f"Downloaded MSA archive does not contain expected files: {expected_files}. It contains: {files}"
+                self.stdout_list.append(error_msg)
+                raise Exception(error_msg)
+            for file in [os.path.join(temp_tar_gz_extracted, file) for file in files]:
+                for expected_file in expected_files:
+                    if file.endswith(expected_file):
+                        with open(file, 'r') as f:
+                            output = f.read()
+                        merged_output.append(output)
+        return '\n'.join(merged_output)
+
+    def parse_output_a3m(self, output) -> str:
+        """Remove Xs from the start and end of the sequence lines. Remove empty lines and remove \x00 characters. Return a string with lines separated by \n."""
+        x_pos = []
+        new_lines = []
+        lines = output.split("\n")
+        input_seq_name = lines[0]
+        input_seq = lines[1]
+        pattern = r'(^X*)(.*?[^X])(X*$)'
+
+        matches = re.match(pattern, input_seq)
+
+        logging.debug(f"Matches: {matches}")
+        if matches:
+            len_match_start = len(matches.group(1))
+            len_match_end = len(matches.group(3))
+        if len_match_start == 0:
+            len_match_start = None
+        if len_match_end == 0:
+            len_match_end = None
+        logging.debug(f"len_match_start: {len_match_start}, len_match_end: {len_match_end}")
+        input_seq = ''.join(list(lines[1])[len_match_start:-len_match_end])
+        for i, line in enumerate(lines):
+            if line == '\n':
+                logging.debug(f"Empty line (number {i}) found in output. Skipping...")
+                continue    
+            if "\x00" in line:
+                line = line.replace("\x00","")
+            if not line.startswith(">"):
+                line = list(line)
+                line = line[len_match_start:-len_match_end]
+                line = ''.join(line)
+            if line:
+                #if (input_seq_name == line or input_seq == line) and i > 1:
+                #    logging.debug(f"Input seq_name or input_seq found in line {i} of output. Skipping...")
+                #    continue
+                new_lines.append(line)
+        return '\n'.join(new_lines)
+            
+    def query(self, input_fasta_path: str) -> List[Mapping[str, Any]]:
+        with open(input_fasta_path, 'r') as f:
+            input_sequence = parse_fasta(f.read())[0]
+        if len(input_sequence) != 1:
+            error_msg = f"Input FASTA file contains {len(input_sequence)} sequences, but only one sequence is currently supported."
+            self.stderr_list.append(error_msg)
+            raise ValueError(error_msg)
+
+        while True:
+            # Resubmit job until it goes through
+            result = self.submit([input_sequence])
+            while result["status"] in ["UNKNOWN", "RATELIMIT"]:
+                sleep_time = 5 + random.randint(0, 5)
+                logging.error(f"Sleeping for {sleep_time}s. Reason: {result['status']}")
+                # resubmit
+                time.sleep(sleep_time)
+                result = self.submit(input_sequence)
+            if result["status"] == "ERROR":
+                error_msg = f'MMseqs2 API is giving errors. Please confirm your input is a valid protein sequence. If error persists, please try again an hour later.'
+                self.stderr_list.append(error_msg)
+                raise Exception(error_msg)
+            if result["status"] == "MAINTENANCE":
+                error_msg = f"MMseqs2 API is undergoing maintenance. Please try again in a few minutes."
+                self.stderr_list.append(error_msg)
+                raise Exception(error_msg)
+
+            # wait for job to finish
+            job_id,TIME = result["id"],0
+
+            while result["status"] in ["UNKNOWN","RUNNING","PENDING"]:
+                t = 5 + random.randint(0,5)
+                logging.info(f"MMseqs2 job is {result['status']}. Waiting for {t}s before checking status again.")
+                time.sleep(t)
+                result = self.get_status(job_id)
+            if result["status"] == "COMPLETE":
+                break
+            if result["status"] == "ERROR":
+                error_msg = f'MMseqs2 API is giving errors. Please confirm your input is a valid protein sequence. If error persists, please try again an hour later.'
+                self.stderr_list.append(error_msg)
+                raise Exception(error_msg)
+
+        # download results
+        output = self.download(job_id)
+
+        a3m = self.parse_output_a3m(output)
+
+        stdout = '\n'.join(self.stdout_list)
+        stderr = '\n'.join(self.stderr_list)
+        
         raw_output = dict(
             a3m=a3m,
             output=stdout,

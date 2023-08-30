@@ -31,6 +31,7 @@ from alphafold.data.tools import hhsearch
 from alphafold.data.tools import hmmsearch
 from alphafold.data.tools import jackhmmer
 from alphafold.data.tools import mmseqs
+from alphafold.data.tools import mmseqs_api
 from alphafold.data.templates import TemplateSearchResult
 from alphafold.data.parsers import Msa
 from Bio.PDB import MMCIFParser
@@ -192,7 +193,7 @@ def create_precomputed_msas_mapping(precomputed_msas_path):
         logging.warning(f"No precomputed MSAs found in {precomputed_msas_path}.")
     return path_sequence_dict
 
-def copy_files(pcmsa_path, msa_output_dir, convert=False):
+def copy_files(pcmsa_path, msa_output_dir, convert=False, template_pkl=True):
     known_files = ['uniref30_colabfold_envdb',
                    'small_bfd_hits',
                    'bfd_uniref_hits',
@@ -200,7 +201,10 @@ def copy_files(pcmsa_path, msa_output_dir, convert=False):
                    'mgnify_hits',
                    'uniprot_hits',
                    'uniref90_hits',
-                   'template_results']
+                   'pdb_hits'
+                   ]
+    if template_pkl:
+        known_files.append('template_results')
     logging.info(f"Precomputed MSAs path: {pcmsa_path}.")
     for f in os.listdir(pcmsa_path):
         if any([re.search(kf, f) for kf in known_files]):
@@ -238,6 +242,13 @@ def copy_files(pcmsa_path, msa_output_dir, convert=False):
                 target_path = target_path.replace('.sto', '.a3m')
                 with open(target_path, 'w') as f:
                     f.write(a3m)
+            elif f.endswith('.pkl'):
+                src_path = os.path.join(pcmsa_path, f)
+                target_path = os.path.join(msa_output_dir, os.path.basename(f))
+                if not os.path.exists(target_path):
+                    copyfile(src_path, target_path)
+                else:
+                    logging.info(f"Not copying precomputed templates. {target_path} already exists.")
 
         else:
             logging.debug(f"{f} not known. Not copying.")
@@ -389,7 +400,8 @@ class DataPipeline:
                template_searcher: TemplateSearcher,
                template_featurizer: templates.TemplateHitFeaturizer,
                use_small_bfd: bool,
-               use_mmseqs: bool,
+               use_mmseqs_local: bool,
+               use_mmseqs_api: bool,
                mgnify_max_hits: int = 501,
                uniref_max_hits: int = 10000,
                use_precomputed_msas: bool = False,
@@ -397,7 +409,8 @@ class DataPipeline:
                precomputed_msas_path: str = None):
     """Initializes the data pipeline."""
     self._use_small_bfd = use_small_bfd
-    self._use_mmseqs = use_mmseqs
+    self._use_mmseqs_local = use_mmseqs_local
+    self._use_mmseqs_api = use_mmseqs_api
     self.jackhmmer_uniref90_runner = jackhmmer.Jackhmmer(
         binary_path=jackhmmer_binary_path,
         database_path=uniref90_database_path,
@@ -407,7 +420,7 @@ class DataPipeline:
           binary_path=jackhmmer_binary_path,
           database_path=small_bfd_database_path,
           custom_tempdir=custom_tempdir)
-    elif not self._use_mmseqs and not use_small_bfd:
+    elif not any([self._use_mmseqs_local, self._use_mmseqs_api, use_small_bfd]):
       self.hhblits_bfd_uniref_runner = hhblits.HHBlits(
           binary_path=hhblits_binary_path,
           databases=[bfd_database_path, uniref30_database_path],
@@ -416,10 +429,13 @@ class DataPipeline:
         binary_path=jackhmmer_binary_path,
         database_path=mgnify_database_path,
         custom_tempdir=custom_tempdir)
-    if self._use_mmseqs:
+    if self._use_mmseqs_local:
         self.mmseqs_runner = mmseqs.MMSeqs(
             binary_path=mmseqs_binary_path,
             database_path=[uniref30_mmseqs_database_path, colabfold_envdb_database_path],
+            custom_tempdir=custom_tempdir)
+    if self._use_mmseqs_api:
+        self.mmseqs_api_runner = mmseqs.MMSeqsAPI(
             custom_tempdir=custom_tempdir)
     self.template_searcher = template_searcher
     self.template_featurizer = template_featurizer
@@ -452,21 +468,28 @@ class DataPipeline:
           msa_output_dir,
           no_msa,
           no_template,
-          custom_template,
-          precomputed_msas,
+          custom_template_path,
+          precomputed_msas_path,
           num_cpu):
     #If number of CPU > 2 hhblits and jackhmmer jobs can run in parallel. Available CPUs (devided by two) will be forwarded to the
     #hhblits and jackhmmer "tools". In case of mmseqs job not more than 8 CPUs will be used for the jackhmmer job and the rest
     #will be used for mmseqs.
     mmseqs_cpu, tool_cpu = 1, 1
     if num_cpu > 2:
-      if self._use_mmseqs:
+      if self._use_mmseqs_local:
           if num_cpu > 16:
               tool_cpu = 8
               mmseqs_cpu = num_cpu - 8
           else:
               tool_cpu = int(num_cpu / 2)
               mmseqs_cpu = int(num_cpu / 2)
+      elif self._use_mmseqs_api:
+          if num_cpu > 8:
+              tool_cpu = num_cpu - 1
+              mmseqs_cpu = 1
+          else:
+              tool_cpu = num_cpu - 1
+              mmseqs_cpu = 1
       else:
           tool_cpu = int(num_cpu / 2)
 
@@ -480,18 +503,17 @@ class DataPipeline:
     input_description = input_descs[0]
     num_res = len(input_sequence)
 
-    reprocess_templates = False
-    if precomputed_msas:
-        if isinstance(precomputed_msas, list):
-            if len(precomputed_msas) > 1:
+    if precomputed_msas_path:
+        if isinstance(precomputed_msas_path, list):
+            if len(precomputed_msas_path) > 1:
                 raise ValueError("Too many items at this stage")
             else:
-                precomputed_msas = precomputed_msas[0]
-        if not precomputed_msas in [None, "None", "none"]:
-            if is_subsequence(input_sequence, precomputed_msas):
+                precomputed_msas_path = precomputed_msas_path[0]
+        if not precomputed_msas_path in [None, "None", "none"]:
+            if is_subsequence(input_sequence, precomputed_msas_path):
                 #is_subsequence(input_sequence, precomputed_msas)
-                reprocess_templates = True
-                copy_files(precomputed_msas, msa_output_dir, convert=True)
+                #If the MSAs need to be cropped the templates need to be reprocessed so don't copy the processed template_results.pkl
+                copy_files(precomputed_msas_path, msa_output_dir, convert=True, template_pkl=False)
                 logging.info("Input sequence is a subsequence of provided MSAs. MSAs will be cropped.")
                 for msa_file in ['uniref30_colabfold_envdb.a3m',
                             'small_bfd_hits.a3m',
@@ -504,17 +526,17 @@ class DataPipeline:
                         logging.info(f"Removing columns from {msa_file}.")
                         slice_msa(msa_file, input_sequence)
             else:
-                copy_files(precomputed_msas, msa_output_dir, convert=False)
-                logging.info("Not a subsequence.")
-    if self._use_mmseqs:
+                copy_files(precomputed_msas_path, msa_output_dir, convert=False, template_pkl=True)
+                logging.debug("Not a subsequence.")
+    if self._use_mmseqs_local:
         self.mmseqs_runner.n_cpu = mmseqs_cpu
     self.jackhmmer_uniref90_runner.n_cpu = tool_cpu
     self.jackhmmer_mgnify_runner.n_cpu = tool_cpu
     if self._use_small_bfd:
         self.jackhmmer_small_bfd_runner.n_cpu = tool_cpu
-    elif not self._use_mmseqs and not self._use_small_bfd:
+    elif not any([self._use_mmseqs_local, self._use_mmseqs_api, self._use_small_bfd]):
         self.hhblits_bfd_uniref_runner.n_cpu = tool_cpu
-    logging.info(f"No MSA: {no_msa}; No Templates: {no_template}; Custom Template {custom_template}; Precomputed MSAs {precomputed_msas}")
+    logging.info(f"No MSA: {no_msa}; No Templates: {no_template}; Custom Template {custom_template_path}; Precomputed MSAs {precomputed_msas_path}")
     if isinstance(no_msa, list):
         if len(no_msa) > 1:
             raise ValueError("Too many items at this stage")
@@ -528,17 +550,17 @@ class DataPipeline:
             no_template = no_template[0]
 
 
-    if isinstance(custom_template, list):
-         if len(custom_template) > 1:
+    if isinstance(custom_template_path, list):
+         if len(custom_template_path) > 1:
              raise ValueError("Too many items at this stage")
          else:
-             custom_template = custom_template[0]
+             custom_template_path = custom_template_path[0]
 
 
     """Runs alignment tools on the input sequence and creates features."""
     msa_jobs = []
     if not no_msa:
-        if self._use_mmseqs:
+        if self._use_mmseqs_local:
             uniref30_colabfold_envdb_out_path = os.path.join(msa_output_dir, 'uniref30_colabfold_envdb.a3m')
             msa_jobs.append(
                 (self.mmseqs_runner,
@@ -546,6 +568,14 @@ class DataPipeline:
                  uniref30_colabfold_envdb_out_path,
                  'a3m',
                  self.use_precomputed_msas))
+        elif self._use_mmseqs_api:
+            uniref30_colabfold_envdb_out_path = os.path.join(msa_output_dir, 'uniref30_colabfold_envdb.a3m')
+            msa_jobs.append(
+                (self.mmseqs_api_runner,
+                input_fasta_path,
+                uniref30_colabfold_envdb_out_path,
+                'a3m',
+                self.use_precomputed_msas))
         else:
             if self._use_small_bfd:
                 bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
@@ -605,9 +635,19 @@ class DataPipeline:
                 raise e
 
     if not no_msa:
-        if self._use_mmseqs:
+        if self._use_mmseqs_local or self._use_mmseqs_api:
             mmseqs_uniref30_colabfold_envdb_result = msa_jobs_results[0]
+            logging.debug("Parsing mmseqs result")
+            #logging.debug(mmseqs_uniref30_colabfold_envdb_result)
             uniref30_colabfold_envdb_msa = parsers.parse_a3m(mmseqs_uniref30_colabfold_envdb_result['a3m'])
+            for i, seq in enumerate(uniref30_colabfold_envdb_msa.sequences):
+                if i == 0:
+                    initial_length = len(seq)
+                else:
+                    if len(seq) != initial_length:
+                        logging.debug(f"Length of sequence {uniref30_colabfold_envdb_msa.descriptions[i]} is {len(seq)}")
+                        raise ValueError("Sequences in the msa have different lengths.")
+                    logging.debug(f"Length of sequence is {len(seq)}")
         else:
             if self._use_small_bfd:
                 jackhmmer_small_bfd_result = msa_jobs_results[0]
@@ -635,6 +675,7 @@ class DataPipeline:
         else:
             jackhmmer_uniref90_result = msa_jobs_results[-1]
         if not 'a3m' in jackhmmer_uniref90_result:
+            logging.debug("Parsing stockholm msa")
             uniref90_msa = parsers.parse_stockholm(jackhmmer_uniref90_result['sto'])
             uniref90_msa = uniref90_msa.truncate(max_seqs=self.uniref_max_hits)
             msa_for_templates = jackhmmer_uniref90_result['sto']
@@ -645,46 +686,46 @@ class DataPipeline:
             uniref90_msa = parsers.parse_a3m(jackhmmer_uniref90_result['a3m'])
             msa_for_templates = jackhmmer_uniref90_result
 
-    template_result_out = os.path.join(
-        msa_output_dir, 'template_results.pkl')
-
-    use_precomputed_templates = False
-    if all([os.path.exists(template_result_out),
-        self.use_precomputed_msas,
-        not reprocess_templates,
-        not custom_template,
-        not no_template]):
-        use_precomputed_templates = True
 
     #Refactored to implement use of a single custom template
-    if not custom_template is None:
+    if not custom_template_path is None:
         logging.info("Using custom template")
-        if os.path.exists(custom_template):
-            logging.info(custom_template)
-            template_sequence = self.get_template_sequence(custom_template)
-            template_searcher = hhalign.HHAlign(self.template_searcher.hhalign_binary_path)
-            if not 'a3m' in msa_for_templates:
-                uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(msa_for_templates)
-            else:
-                uniref90_msa_as_a3m = msa_for_templates['a3m']
-            pdb_templates_result = template_searcher.query(template_sequence, uniref90_msa_as_a3m)
+        if os.path.exists(custom_template_path):
+            logging.info(custom_template_path)
+            custom_templates = [os.path.join(custom_template_path, f) for f in os.listdir(custom_template_path)]
+            if len(custom_templates) > 0:
+                template_searcher = hhalign.HHAlign(self.template_searcher.hhalign_binary_path)
+                if not 'a3m' in msa_for_templates:
+                    uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(msa_for_templates)
+                else:
+                    uniref90_msa_as_a3m = msa_for_templates['a3m']
 
-            self.template_featurizer_initial = deepcopy(self.template_featurizer)
-            self.template_featurizer_custom = templates.HhsearchHitFeaturizer(
-                mmcif_dir=os.path.dirname(custom_template),
-                max_template_date=self.template_featurizer_initial._max_template_date.strftime("%Y-%m-%d"),
-                max_hits=self.template_featurizer_initial._max_hits,
-                kalign_binary_path=self.template_featurizer_initial._kalign_binary_path,
-                release_dates_path=None,
-                obsolete_pdbs_path=None,
-                strict_error_check=False,
-                custom_tempdir=self.custom_tempdir)
-            pdb_template_hits = template_searcher.get_template_hits(
-                output_string=pdb_templates_result, input_sequence=input_sequence)
-            logging.info(pdb_template_hits)
+                
+                pdb_templates_results = []
+                for custom_template in custom_templates:
+                    template_sequence = self.get_template_sequence(custom_template)
+                    pdb_templates_result = template_searcher.query(template_sequence, uniref90_msa_as_a3m)
+                    pdb_templates_results.append(pdb_templates_result)
+                pdb_templates_result = '\n'.join(pdb_templates_results)
+
+                self.template_featurizer_initial = deepcopy(self.template_featurizer)
+                self.template_featurizer_custom = templates.HhsearchHitFeaturizer(
+                    mmcif_dir=custom_template_path,
+                    max_template_date=self.template_featurizer_initial._max_template_date.strftime("%Y-%m-%d"),
+                    max_hits=self.template_featurizer_initial._max_hits,
+                    kalign_binary_path=self.template_featurizer_initial._kalign_binary_path,
+                    release_dates_path=None,
+                    obsolete_pdbs_path=None,
+                    strict_error_check=False,
+                    custom_tempdir=self.custom_tempdir)
+                pdb_template_hits = template_searcher.get_template_hits(
+                    output_string=pdb_templates_result, input_sequence=input_sequence)
+                logging.info(pdb_template_hits)             
+            else:
+                logging.error(f"No files found in provided custom template folder {custom_template_path}")
         else:
-            logging.error(f"Custom template not found in {custom_template}")
-    elif not no_template and not use_precomputed_templates:
+            logging.error(f"Custom template folder {custom_template_path} does not exist.")
+    elif not no_template:
         logging.info("Using templates from the PDB")
         pdb_hits_out_path = os.path.join(
             msa_output_dir, f'pdb_hits.{self.template_searcher.output_format}')
@@ -698,19 +739,19 @@ class DataPipeline:
                 pdb_templates_result = self.template_searcher.query(uniref90_msa_as_a3m)
             else:
                 raise ValueError('Unrecognized template input format: '
-                                f'{self.template_searcher.input_format}')
+                                 f'{self.template_searcher.input_format}')
             with open(pdb_hits_out_path, 'w') as f:
                 f.write(pdb_templates_result)
         else:
-            logging.info(f"Reading template hits from {pdb_hits_out_path}")
             with open(pdb_hits_out_path, 'r') as f:
                 pdb_templates_result = f.read()
-        
         pdb_template_hits = self.template_searcher.get_template_hits(
             output_string=pdb_templates_result, input_sequence=input_sequence)
 
 
-    logging.debug(f"check template.pkl: {os.path.exists(template_result_out)}, {not custom_template}, {not no_template}, {self.use_precomputed_msas}")
+
+    template_result_out = os.path.join(
+        msa_output_dir, 'template_results.pkl')
     if no_template:
         logging.info("Generating dummy template.")
         templates_result = TemplateSearchResult(features={
@@ -725,12 +766,16 @@ class DataPipeline:
             'template_sequence': np.array([''.encode()], dtype=np.object),
             'template_sum_probs': np.array([0], dtype=np.float32)
         }, errors=[], warnings=[])
-    elif use_precomputed_templates:
+    elif all([os.path.exists(template_result_out),
+              #not len(input_sequence) < len(uniref90_msa.sequences[0]),
+              not custom_template_path,
+              not no_template,
+              self.use_precomputed_msas]):
         logging.info("Opening template from pickle")
         with open(template_result_out, 'rb') as f:
             templates_result = pickle.load(f)
     else:
-        if not custom_template is None:
+        if not custom_template_path is None:
             logging.info("Getting template from custom file.")
             templates_result = self.template_featurizer_custom.get_templates(
                 query_sequence=input_sequence,
@@ -756,14 +801,22 @@ class DataPipeline:
         logging.debug("Using empty MSA.")
     else:
         logging.debug("Using MSA")
-        if self._use_mmseqs:
+        if self._use_mmseqs_local or self._use_mmseqs_api:
+            logging.debug(f"Shape uniref90 sequences {np.array(uniref90_msa.sequences).shape}\n\
+                Shape uniref90 deletion matrix {np.array(uniref90_msa.deletion_matrix).shape}\n\
+                Shape colabfold sequences {np.array( uniref30_colabfold_envdb_msa.sequences).shape}\n\
+                Shape colabfold deletion matrix {np.array(uniref30_colabfold_envdb_msa.deletion_matrix).shape}")
             msa_features = make_msa_features((uniref90_msa, uniref30_colabfold_envdb_msa))
+            logging.debug(f"Shape uniref90 sequences {np.array(uniref90_msa.sequences).shape}\n\
+                Shape uniref90 deletion matrix {np.array(uniref90_msa.deletion_matrix).shape}\n\
+                Shape colabfold sequences {np.array( uniref30_colabfold_envdb_msa.sequences).shape}\n\
+                Shape colabfold deletion matrix {np.array(uniref30_colabfold_envdb_msa.deletion_matrix).shape}")
         else:
             msa_features = make_msa_features((uniref90_msa, bfd_msa, mgnify_msa))
 
     if not no_msa:
         logging.info('Uniref90 MSA size: %d sequences.', len(uniref90_msa))
-        if self._use_mmseqs:
+        if self._use_mmseqs_local or self._use_mmseqs_api:
             logging.info('Uniref30 and colabfold_envdb MSA size: %d sequences.', len(uniref30_colabfold_envdb_msa))
         else:
             logging.info('BFD MSA size: %d sequences.', len(bfd_msa))

@@ -216,8 +216,8 @@ class DataPipeline:
       is_homomer_or_monomer: bool,
       no_msa: bool,
       no_template: bool,
-      custom_template: str,
-      precomputed_msas: str,
+      custom_template_path: str,
+      precomputed_msas_path: str,
       num_cpu: int) -> pipeline.FeatureDict:
     """Runs the monomer pipeline on a single chain."""
     chain_fasta_str = f'>chain_{chain_id}\n{sequence}\n'
@@ -232,8 +232,8 @@ class DataPipeline:
           msa_output_dir=chain_msa_output_dir,
           no_msa=no_msa,
           no_template=no_template,
-          custom_template=custom_template,
-          precomputed_msas=precomputed_msas,
+          custom_template_path=custom_template_path,
+          precomputed_msas_path=precomputed_msas_path,
           num_cpu=num_cpu)
 
       # We only construct the pairing features if there are 2 or more unique
@@ -282,8 +282,8 @@ class DataPipeline:
               msa_output_dir: str,
               no_msa,
               no_template,
-              custom_template,
-              precomputed_msas,
+              custom_template_path,
+              precomputed_msas_path,
               num_cpu) -> pipeline.FeatureDict:
     """Runs alignment tools on the input sequences and creates features."""
     with open(input_fasta_path) as f:
@@ -312,12 +312,9 @@ class DataPipeline:
             sequence_features[fasta_chain.sequence])
         continue
 
-      logging.info(f"Precomputed MSA is {precomputed_msas[i]}")
-      if precomputed_msas[i] in [None, "None", "none"]:
-          logging.info(f"Precomputed MSA is {precomputed_msas[i]}")
+      if precomputed_msas_path[i] in [None, "None", "none"]:
           if chain_id in pcmsa_map:
-              precomputed_msas[i] = pcmsa_map[chain_id]
-      logging.info(f"Using Precomputed MSA: {precomputed_msas[i]}")
+              precomputed_msas_path[i] = pcmsa_map[chain_id]
 
       chain_features = self._process_single_chain(
             chain_id=chain_id,
@@ -327,8 +324,8 @@ class DataPipeline:
             is_homomer_or_monomer=is_homomer_or_monomer,
             no_msa=no_msa[i],
             no_template=no_template[i],
-            custom_template=custom_template[i],
-            precomputed_msas=precomputed_msas[i],
+            custom_template_path=custom_template_path[i],
+            precomputed_msas_path=precomputed_msas_path[i],
             num_cpu=num_cpu)
 
       chain_features = convert_monomer_features(chain_features,
