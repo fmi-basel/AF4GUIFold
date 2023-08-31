@@ -144,9 +144,9 @@ class MMSeqs:
 
     def query(self, input_fasta_path: str) -> List[Mapping[str, Any]]:
         """Queries the database using MMSeqs."""
-        with utils.tmpdir_manager(os.path.join(self.custom_tempdir, "query")) as query_tmp_dir, \
-                utils.tmpdir_manager(os.path.join(self.custom_tempdir, "uniref")) as uniref_tmp_dir, \
-                utils.tmpdir_manager(os.path.join(self.custom_tempdir, "env")) as env_tmp_dir:
+        with utils.tmpdir_manager(self.custom_tempdir) as query_tmp_dir, \
+                utils.tmpdir_manager(self.custom_tempdir) as uniref_tmp_dir, \
+                utils.tmpdir_manager(self.custom_tempdir) as env_tmp_dir:
             output_a3m_path = os.path.join(query_tmp_dir, "0.a3m")
             output_packed_a3m_path = os.path.join(query_tmp_dir, 'output_packed.a3m')
             uniref_a3m_path = os.path.join(query_tmp_dir, 'uniref.a3m')
@@ -257,7 +257,7 @@ class MMSeqs:
                            self.env_db_suffix1]
 
             uniref_cmds = [cmd_create_db,
-                    #cmd_touchdb_uniref,
+                    cmd_touchdb_uniref,
                     cmd_uniref_search,
                     cmd_uniref_expandaln,
                     cmd_uniref_mvdb,
@@ -341,7 +341,7 @@ class MMSeqs:
                           "--unpack-suffix", ".a3m"]
 
             env_cmds = [
-                    #cmd_touchdb_env,
+                    cmd_touchdb_env,
                     cmd_env_search,
                     cmd_env_expandaln,
                     cmd_env_align,
