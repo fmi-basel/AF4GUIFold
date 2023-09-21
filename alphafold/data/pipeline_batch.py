@@ -22,6 +22,7 @@ import contextlib
 import copy
 import dataclasses
 import json
+import multiprocessing
 import os
 import tempfile
 from typing import Mapping, MutableMapping, Sequence
@@ -34,6 +35,7 @@ from alphafold.data import msa_pairing
 from alphafold.data import parsers
 from alphafold.data import pipeline
 from alphafold.data.tools import jackhmmer
+from alphafold.data.tools import mmseqs
 import numpy as np
 import signal
 from shutil import copyfile
@@ -63,11 +65,14 @@ def temp_fasta_file(fasta_str: str, custom_tempdir: str):
         fasta_file.seek(0)
         yield fasta_file.name
 
+
+
 class DataPipeline:
     """Runs the alignment tools and assembles the input features."""
 
     def __init__(self,
-                 monomer_data_pipeline: pipeline.DataPipeline):
+                 monomer_data_pipeline: pipeline.DataPipeline,
+                 batch_mmseqs: bool):
         """Initializes the data pipeline.
 
         Args:
@@ -78,6 +83,38 @@ class DataPipeline:
         self.use_precomputed_msas = self._monomer_data_pipeline.use_precomputed_msas
         self.custom_tempdir = self._monomer_data_pipeline.custom_tempdir
         self.precomputed_msas_path = self._monomer_data_pipeline.precomputed_msas_path
+        self.batch_mmseqs = batch_mmseqs
+        self.result_queue = multiprocessing.Queue()
+        self.semaphore = multiprocessing.Semaphore(20)  # Limit to 20 concurrent processes
+
+
+
+    def process_tasks(self, task_list):
+        processes = []
+        logging.info("Processing in parallel")
+        for kwargs in task_list:
+            self.semaphore.acquire()  # Acquire semaphore to limit concurrent processes
+            process = multiprocessing.Process(target=self._process_with_semaphore, args=(kwargs,))
+            processes.append(process)
+            process.start()
+
+        for process in processes:
+            process.join()
+
+    def _process_with_semaphore(self, kwargs):
+        try:
+            self._process_single_chain(**kwargs, result_queue=self.result_queue)
+        finally:
+            self.semaphore.release()  # Release semaphore when done
+
+    def collect_results(self):
+        results = []
+        while not self.result_queue.empty():
+            result = self.result_queue.get()
+            results.append(result)
+
+        return results
+
 
     def _process_single_chain(
             self,
@@ -88,7 +125,8 @@ class DataPipeline:
             no_template: bool,
             custom_template_path: str,
             precomputed_msas_path: str,
-            num_cpu: int) -> pipeline.FeatureDict:
+            num_cpu: int,
+            result_queue: multiprocessing.Queue = None) -> pipeline.FeatureDict:
         """Runs the monomer pipeline on a single chain."""
         fasta_str = f'>{description}\n{sequence}\n'
         msa_output_dir = os.path.join(msa_output_dir, description)
@@ -105,17 +143,20 @@ class DataPipeline:
                 custom_template_path=custom_template_path,
                 precomputed_msas_path=precomputed_msas_path,
                 num_cpu=num_cpu)
-
-        return features
-
+            
+        if result_queue:
+            result_queue.put(features)
+        else:
+            return features
+    
     def process(self,
                 input_fasta_path: str,
                 msa_output_dir: str,
-                no_msa,
-                no_template,
-                custom_template_path,
-                precomputed_msas_path,
-                num_cpu) -> pipeline.FeatureDict:
+                no_msa: str,
+                no_template: str,
+                custom_template_path: str,
+                precomputed_msas_path: str,
+                num_cpu: int) -> pipeline.FeatureDict:
         """Runs alignment tools on the input sequences and creates features."""
         with open(input_fasta_path) as f:
             input_fasta_str = f.read()
@@ -126,6 +167,27 @@ class DataPipeline:
         desc_map_path = os.path.join(msa_output_dir, 'desc_map.json')
         with open(desc_map_path, 'w') as f:
             json.dump(desc_map, f, indent=4, sort_keys=True)
+        
+        if self.batch_mmseqs:
+            logging.info("Running mmseqs in batch mode")
+            self._monomer_data_pipeline.process_batch_mmseqs(input_fasta_path=input_fasta_path,
+                                                              msa_output_dir=msa_output_dir,
+                                                              num_cpu=num_cpu)
+            #Set to true because all MSAs are calculated in the previous step.
+            self._monomer_data_pipeline.use_precomputed_msas = True
+
+            task_list = [{'sequence': sequence,
+                          'description': desc,
+                          'msa_output_dir': msa_output_dir,
+                          'no_msa': no_msa[i],
+                          'no_template': no_template[i],
+                          'custom_template_path': custom_template_path[i],
+                          'precomputed_msas_path': precomputed_msas_path[i],
+                          'num_cpu': num_cpu} for i, (desc, sequence) in enumerate(desc_map.items())]
+            
+            self.process_tasks(task_list)
+            all_features = self.collect_results()
+            return all_features
 
         all_features = []
         for i, (desc, sequence) in enumerate(desc_map.items()):

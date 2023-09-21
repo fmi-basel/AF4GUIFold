@@ -76,6 +76,7 @@ class HHSearch:
     with utils.tmpdir_manager(self.custom_tempdir) as query_tmp_dir:
       input_path = os.path.join(query_tmp_dir, 'query.a3m')
       hhr_path = os.path.join(query_tmp_dir, 'output.hhr')
+      atab_path = os.path.join(query_tmp_dir, 'output.atab')
       with open(input_path, 'w') as f:
         f.write(a3m)
 
@@ -86,7 +87,8 @@ class HHSearch:
       cmd = [self.binary_path,
              '-i', input_path,
              '-o', hhr_path,
-             '-maxseq', str(self.maxseq)
+             '-maxseq', str(self.maxseq),
+             '-atab', atab_path,
              ] + db_cmd
 
       logging.info('Launching subprocess "%s"', ' '.join(cmd))
@@ -104,7 +106,9 @@ class HHSearch:
 
       with open(hhr_path) as f:
         hhr = f.read()
-    return hhr
+      with open(atab_path) as f:
+        atab = f.read()
+    return hhr, atab
 
   def get_template_hits(self,
                         output_string: str,

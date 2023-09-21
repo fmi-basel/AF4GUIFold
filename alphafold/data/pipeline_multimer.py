@@ -249,14 +249,15 @@ class DataPipeline:
     """Get MSA features for unclustered uniprot, for pairing."""
     out_path = os.path.join(msa_output_dir, 'uniprot_hits.sto')
     out_path_a3m = os.path.join(msa_output_dir, 'uniprot_hits.a3m')
+    out_path_mmseqs = os.path.join(msa_output_dir, 'uniprot_mmseqs_hits.a3m')
     self._uniprot_msa_runner.n_cpu = num_cpu
-    if not os.path.exists(out_path) and not os.path.exists(out_path_a3m):
+    if not os.path.exists(out_path) and not os.path.exists(out_path_a3m) and not os.path.exists(out_path_mmseqs):
         result = pipeline.run_msa_tool(
             self._uniprot_msa_runner, input_fasta_path, out_path, 'sto',
             self.use_precomputed_msas)
         with open(out_path, 'w') as f:
             f.write(result['sto'])
-    if os.path.exists(out_path_a3m) and not os.path.exists(out_path):
+    if (os.path.exists(out_path_a3m) and not os.path.exists(out_path)) or os.path.exists(out_path_mmseqs):
         with open(out_path_a3m, 'r') as f:
             a3m = f.read()
         result = dict(a3m=a3m)
@@ -292,7 +293,7 @@ class DataPipeline:
     chain_id_map = _make_chain_id_map(sequences=input_seqs,
                                       descriptions=input_descs)
     if self.precomputed_msas_path:
-        pcmsa_map = pipeline.get_pcmsa_map(self.precomputed_msas_path, chain_id_map)
+        pcmsa_map = pipeline.get_pcmsa_map(self.precomputed_msas_path, chain_id_map, self._monomer_data_pipeline.db_preset)
     else:
         pcmsa_map = {}
 

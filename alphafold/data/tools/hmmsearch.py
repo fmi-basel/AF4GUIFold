@@ -86,7 +86,7 @@ class Hmmsearch(object):
     else:
         hmm = self.hmmbuild_runner.build_profile_from_sto(msa,
                                                           model_construction='hand')
-    return self.query_with_hmm(hmm)
+    return self.query_with_hmm(hmm), None
 
   def query_with_hmm(self, hmm: str) -> str:
     """Queries the database using hmmsearch using a given hmm."""

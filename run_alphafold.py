@@ -101,11 +101,12 @@ flags.DEFINE_string('obsolete_pdbs_path', None, 'Path to file containing a '
                     'mapping from obsolete PDB IDs to the PDB IDs of their '
                     'replacements.')
 flags.DEFINE_enum('db_preset', 'full_dbs',
-                  ['full_dbs', 'reduced_dbs', 'colabfold'],
+                  ['full_dbs', 'reduced_dbs', 'colabfold_local', 'colabfold_web'],
                   'Choose preset MSA database configuration - '
                   'smaller genetic database config (reduced_dbs) or '
                   'full genetic database config  (full_dbs) or '
-                  'colabfold database config (uniref30, colabfold_envdb) in combination with jackhmmer+mmseqs')
+                  'colabfold database config (uniref30, colabfold_envdb) in combination with jackhmmer+mmseqs2 (colabfold_local) '
+                  'or colabfold web server (colabfold_web).')
 flags.DEFINE_enum('model_preset', 'monomer',
                   ['monomer', 'monomer_casp14', 'monomer_ptm', 'multimer'],
                   'Choose preset model configuration - the monomer model, '
@@ -220,8 +221,8 @@ def predict_structure(
             msa_output_dir=msa_output_dir,
             no_msa=no_msa_list,
             no_template=no_template_list,
-            custom_template=custom_template_list,
-            precomputed_msas=precomputed_msas_list,
+            custom_template_path=custom_template_list,
+            precomputed_msas_path=precomputed_msas_list,
             num_cpu=FLAGS.num_cpu)
       timings['features'] = time.time() - t_0
 
@@ -372,6 +373,7 @@ def main(argv):
       logging.set_verbosity(logging.DEBUG)
   else:
       logging.set_verbosity(logging.INFO)
+  logging.info("Alphafold pipeline starting...")
   if FLAGS.precomputed_msas_list is None:
       FLAGS.precomputed_msas_list = [FLAGS.precomputed_msas_list]
   if not FLAGS.precomputed_msas_path in ['None', None] or any([not item in ('None', None) for item in FLAGS.precomputed_msas_list]):
@@ -380,7 +382,8 @@ def main(argv):
   #Do not check for MSA tools when MSA already exists.
   run_multimer_system = 'multimer' in FLAGS.model_preset
   use_small_bfd = FLAGS.db_preset == 'reduced_dbs'
-  use_mmseqs = FLAGS.db_preset == 'colabfold'
+  use_mmseqs_local = FLAGS.db_preset == 'colabfold_local'
+  use_mmseqs_api = FLAGS.db_preset == 'colabfold_web'
   if FLAGS.precomputed_msas_path and FLAGS.precomputed_msas_list:
       logging.warning("Flags --precomputed_msas_path and --precomputed_msas_list selected at the same time. "
                       "MSAs from --precomputed_msas_list get priority over MSAs from --precomputed_msas_path.")
@@ -390,7 +393,7 @@ def main(argv):
         if not FLAGS[f'{tool_name}_binary_path'].value:
           raise ValueError(f'Could not find path to the "{tool_name}" binary. Make '
                            'sure it is installed on your system.')
-        if FLAGS.db_preset == 'colabfold':
+        if use_mmseqs_local:
             if not FLAGS.mmseqs_binary_path:
                 raise ValueError(f'Could not find path to mmseqs2 binary. Make sure it is installed on your system.')
       _check_flag('small_bfd_database_path', 'db_preset',
@@ -398,7 +401,7 @@ def main(argv):
       _check_flag('bfd_database_path', 'db_preset',
                   should_be_set=not use_small_bfd)
       _check_flag('uniref30_database_path', 'db_preset',
-                  should_be_set=not use_small_bfd and not use_mmseqs)
+                  should_be_set=not use_small_bfd and not use_mmseqs_local and not use_mmseqs_api)
       _check_flag('pdb70_database_path', 'model_preset',
                   should_be_set=not run_multimer_system)
       _check_flag('pdb_seqres_database_path', 'model_preset',
@@ -406,9 +409,9 @@ def main(argv):
       _check_flag('uniprot_database_path', 'model_preset',
                   should_be_set=run_multimer_system)
       _check_flag('colabfold_envdb_database_path', 'db_preset',
-                  should_be_set=use_mmseqs)
+                  should_be_set=use_mmseqs_local)
       _check_flag('uniref30_mmseqs_database_path', 'db_preset',
-                  should_be_set=use_mmseqs)
+                  should_be_set=use_mmseqs_local)
 
   if FLAGS.model_preset == 'monomer_casp14':
     num_ensemble = 8
@@ -465,14 +468,13 @@ def main(argv):
       template_featurizer=template_featurizer,
       use_small_bfd=use_small_bfd,
       use_precomputed_msas=FLAGS.use_precomputed_msas,
-      use_mmseqs=use_mmseqs,
+      use_mmseqs_local=use_mmseqs_local,
+      use_mmseqs_api=use_mmseqs_api,
       custom_tempdir=FLAGS.custom_tempdir,
       precomputed_msas_path=FLAGS.precomputed_msas_path)
 
   if FLAGS.pipeline == 'batch_msas':
-      data_pipeline = pipeline_batch.DataPipeline(monomer_data_pipeline=monomer_data_pipeline, 
-        jackhmmer_binary_path=FLAGS.jackhmmer_binary_path,
-        uniprot_database_path=FLAGS.uniprot_database_path)
+      data_pipeline = pipeline_batch.DataPipeline(monomer_data_pipeline)
       num_predictions_per_model = 1
   elif run_multimer_system and not FLAGS.pipeline == 'batch_msas':
     num_predictions_per_model = FLAGS.num_multimer_predictions_per_model
@@ -498,7 +500,7 @@ def main(argv):
     for i in range(num_predictions_per_model):
       model_runners[f'{model_name}_pred_{i}'] = model_runner
 
-  logging.info('Have %d models: %s', len(model_runners),
+  logging.info('Found %d models: %s', len(model_runners),
                list(model_runners.keys()))
 
   if FLAGS.run_relax:
