@@ -34,6 +34,8 @@ from alphafold.data.tools import mmseqs
 from alphafold.data.tools import mmseqs_api
 from alphafold.data.templates import TemplateSearchResult
 from alphafold.data.parsers import Msa
+from alphafold.data.parsers import parse_fasta
+from alphafold.data.tools import utils
 from Bio.PDB import MMCIFParser
 import numpy as np
 import pickle
@@ -107,10 +109,11 @@ def make_msa_features(msas: Sequence[parsers.Msa]) -> FeatureDict:
 
 
 def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
-                 msa_format: str, use_precomputed_msas: bool,
+                 msa_format: str, database: str, use_precomputed_msas: bool,
                  max_sto_sequences: Optional[int] = None
                  ) -> Mapping[str, Any]:
     """Runs an MSA tool, checking if output already exists first."""
+    result_dict = {database: None}
     msa_out_path_a3m = msa_out_path.replace(".sto", ".a3m")
     if not use_precomputed_msas or (not os.path.exists(msa_out_path) and not os.path.exists(msa_out_path_a3m)):
         logging.warning(f"No MSA found in {msa_out_path} or {msa_out_path_a3m}")
@@ -124,7 +127,7 @@ def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
         if os.path.exists(msa_out_path_a3m) and msa_format == 'sto':
             msa_format = 'a3m'
             msa_out_path = msa_out_path_a3m
-        logging.info('Reading MSA from file %s', msa_out_path)
+        logging.info(f'Reading {database} MSA from file {msa_out_path}')
         if msa_format == 'sto' and max_sto_sequences is not None:
             precomputed_msa = parsers.truncate_stockholm_msa(
                 msa_out_path, max_sto_sequences)
@@ -132,7 +135,8 @@ def run_msa_tool(msa_runner, input_fasta_path: str, msa_out_path: str,
         else:
             with open(msa_out_path, 'r') as f:
                 result = {msa_format: f.read()}
-    return result
+    result_dict[database] = result
+    return result_dict
 
 def template_search(template_searcher, pdb_hits_out_path, atab_out_path, msa_for_templates, input_sequence):
     if not os.path.exists(pdb_hits_out_path):
@@ -159,7 +163,9 @@ def template_search(template_searcher, pdb_hits_out_path, atab_out_path, msa_for
     return pdb_template_hits
 
 def create_precomputed_msas_mapping(precomputed_msas_path, db_preset):
+    """ Search a given folder for MSAs matching the input sequence and create a sequence to path mapping. """
     def _check_matching_workflow(root_dir, db_preset):
+        """ Check if a folder containing MSAs is matching the current feature workflow. """
         files = os.listdir(root_dir)
         expected_files = {}
         expected_files['full_dbs'] = ['bfd_uniref_hits',
@@ -169,7 +175,7 @@ def create_precomputed_msas_mapping(precomputed_msas_path, db_preset):
                                     'uniref90_hits',
                                     'mgnify_hits']
         expected_files['colabfold_web'] = ['uniref30_colabfold_envdb',    
-                                    'uniref90_hits']
+                                    'uniref90']
         expected_files['colabfold_local'] = ['uniref30_colabfold_envdb',
                                     'uniref90_mmseqs_hits']
         for expected_file in expected_files[db_preset]:
@@ -189,7 +195,7 @@ def create_precomputed_msas_mapping(precomputed_msas_path, db_preset):
     logging.info(f"Searching {precomputed_msas_path} for precomputed MSAs.")
     for root_dir, dirs, files in os.walk(os.path.abspath(precomputed_msas_path)):
         for f in files:
-            if re.search("uniref90_hits", f):
+            if re.search("uniref90", f):
                 if not _check_matching_workflow(root_dir, db_preset):
                     logging.debug(f"MSAs found in {root_dir} not matching workflow {db_preset}")
                     continue
@@ -222,17 +228,17 @@ def create_precomputed_msas_mapping(precomputed_msas_path, db_preset):
                     if re.search(".a3m", full_path):
                         if lines[0].startswith('>'):
                             desc, sequence = lines[0], lines[1]
-                            path_sequence_dict[root_dir] = sequence.replace('-', '')
+                            path_sequence_dict[root_dir] = sequence.replace('-', '').strip('\n')
                         else:
                             logging.warning(f"Wrong format in file {full_path} and line {lines[0]}. Cannot use as precomputed MSA.")
                     elif re.search(".sto", full_path):
                         if len(split_line) == 2:
                             desc, sequence = lines[0].split()
-                            path_sequence_dict[root_dir] = sequence.replace('-', '')
+                            path_sequence_dict[root_dir] = sequence.replace('-', '').strip('\n')
                             for line in lines[1:]:
                                 line_desc, line_sequence = line.split()
                                 if line_desc == desc:
-                                    path_sequence_dict[root_dir] += line_sequence.replace('-', '')
+                                    path_sequence_dict[root_dir] += line_sequence.replace('-', '').strip('\n')
                         else:
                             logging.warning(f"Wrong format in file {full_path} and line {lines[0]}. Cannot use as precomputed MSA.")
                     else:
@@ -259,13 +265,15 @@ def copy_files(pcmsa_path, msa_output_dir, convert=False, template_pkl=True):
                    ]
     if template_pkl:
         known_files.append('template_results')
+        known_files.append('template_results_hhr')
+        known_files.append('template_results_hmm')
     logging.info(f"Precomputed MSAs path: {pcmsa_path}.")
     for f in os.listdir(pcmsa_path):
         if any([re.search(kf, f) for kf in known_files]):
             logging.info(f"Found {f} in precomputed msas")
             src_path = os.path.join(pcmsa_path, f)
             #Backward compatibility
-            if re.search('uniref30_colabfold_envdb', f):
+            if re.search('uniref30_colabfold_envdb', f) and not re.search('uniref30_colabfold_envdb_mmseqs_hits', f):
                 f = f.replace('uniref30_colabfold_envdb', 'uniref30_colabfold_envdb_mmseqs_hits')
             target_path = os.path.join(msa_output_dir, os.path.basename(f))
             if f.endswith(('.a3m', '.a3m.gz')) or convert is False:
@@ -410,21 +418,26 @@ def get_precomputed_msas_path(precomputed_msas_path):
 def get_pcmsa_map(precomputed_msas_path, new_map, db_preset):
     #precomputed_msas_path = get_precomputed_msas_path(precomputed_msas_path)
 
+    #Path to sequence mapping of a previous run
     prev_map = create_precomputed_msas_mapping(precomputed_msas_path, db_preset)
 
     pcmsa_map = {}
     #key = new chain_id or description
     #value = new mapping or sequence
-    for key, value in new_map.items():
+    for target_msas_path, input_sequence in new_map.items():
         #key = previous msas path
         #value = previous sequence
         for prev_msas_path, prev_sequence in prev_map.items():
-            if hasattr(value, 'sequence'):
-                sequence = value.sequence
+            if hasattr(input_sequence, 'sequence'):
+                sequence = input_sequence.sequence
             else:
-                sequence = value
+                sequence = input_sequence
             logging.debug(f"Comparing new sequence {list(sequence)} with previous sequence {list(prev_sequence)}")
-            if re.search(sequence, prev_sequence):
+            #Give priority to exact matches. Only use subsequence if a full match is not found.
+            if re.match(sequence, prev_sequence):
+                pcmsa_map[target_msas_path] = prev_msas_path
+                logging.info(f"Found an exact hit in {prev_msas_path}")
+            elif re.search(sequence, prev_sequence):
                 #Check if previous job was monomer job
                 # if any([re.search('uniref90_hits', f) for f in os.listdir(precomputed_msas_path)]):
                 #     prev_msa_dir = precomputed_msas_path
@@ -432,7 +445,11 @@ def get_pcmsa_map(precomputed_msas_path, new_map, db_preset):
                 #     prev_msa_dir = os.path.join(precomputed_msas_path, prev_folder_name)
                 # else:
                 #     raise ValueError(f"No MSAs found in precomputed_msas_path: {precomputed_msas_path}. Expected folder: {prev_folder_name}.")
-                pcmsa_map[key] = prev_msas_path
+                if not target_msas_path in pcmsa_map:
+                    logging.info(f"Found an subsequence hit in {prev_msas_path}")
+                    pcmsa_map[target_msas_path] = prev_msas_path
+                else:
+                    logging.info(f"Found an subsequence hit in {prev_msas_path} but a full hit was already found before.")
 
     if len(pcmsa_map) == 0:
         logging.warning("Could not find any matching precomputed MSA.")
@@ -469,9 +486,10 @@ class DataPipeline:
                precomputed_msas_path: str = None,
                multimer: bool = False):
     """Initializes the data pipeline."""
-    self._use_small_bfd = db_preset == 'small_bfd'
+    self._use_small_bfd = db_preset == 'reduced_dbs'
     self._use_mmseqs_local = db_preset == 'colabfold_local'
     self._use_mmseqs_api = db_preset == 'colabfold_web'
+    logging.debug(f"_use_small_bfd: {self._use_small_bfd}, _use_mmseqs_local: {self._use_mmseqs_local}, _use_mmseqs_api: {self._use_mmseqs_api}")
     self.db_preset = db_preset
     self.jackhmmer_uniref90_runner = jackhmmer.Jackhmmer(
         binary_path=jackhmmer_binary_path,
@@ -487,10 +505,10 @@ class DataPipeline:
           database_path=small_bfd_database_path,
           custom_tempdir=custom_tempdir)
     elif not any([self._use_mmseqs_local, self._use_mmseqs_api, self._use_small_bfd]):
-      self.hhblits_bfd_uniref_runner = hhblits.HHBlits(
-          binary_path=hhblits_binary_path,
-          databases=[bfd_database_path, uniref30_database_path],
-          custom_tempdir=custom_tempdir)
+        self.hhblits_bfd_uniref_runner = hhblits.HHBlits(
+            binary_path=hhblits_binary_path,
+            databases=[bfd_database_path, uniref30_database_path],
+            custom_tempdir=custom_tempdir)
     self.jackhmmer_mgnify_runner = jackhmmer.Jackhmmer(
         binary_path=jackhmmer_binary_path,
         database_path=mgnify_database_path,
@@ -540,44 +558,71 @@ class DataPipeline:
   def init_worker(self):
       signal.signal(signal.SIGINT, signal.SIG_IGN)
 
+  def check_finished_batch_jobs(self, input_fasta_path, msa_output_dir, fasta_temp):
+        fasta_path_temp = os.path.join(fasta_temp, "seqs_to_process.fasta")
+        required_files = ["uniref30_colabfold_envdb_mmseqs_hits.a3m", 
+                                        "uniref90_mmseqs_hits.a3m",
+                                        "uniprot_mmseqs_hits.a3m"]
+        to_process = []
+        with open(input_fasta_path, 'r') as f:
+            seqs, descs = parse_fasta(f.read())
+        for name in descs:
+            output_path = os.path.join(msa_output_dir, name)
+            if os.path.exists(output_path):
+                for required_file in required_files:
+                    if not required_file in os.listdir(output_path):
+                        logging.debug(f"{required_file} not found in {output_path}")
+                        logging.debug(os.listdir(output_path))
+                        to_process.append(name)
+        if len(to_process) == 0:
+            fasta_path_temp = None
+        else:
+            logging.debug(f"{len(to_process)} sequences need to be processed")
+            with open(fasta_path_temp, 'w') as f:
+                for desc_to_process in to_process:
+                    for i, desc in enumerate(descs):
+                        if desc_to_process == desc:
+                            f.write(f">{desc}\n{seqs[i]}\n\n")
+            with open(fasta_path_temp, 'r') as f:
+                content = f.read()
+            logging.debug("Content of temp fasta")
+            logging.debug(content)
+        return fasta_path_temp
+                      
 
   def process_batch_mmseqs(self, input_fasta_path, msa_output_dir, num_cpu):
+      """Process a query with multiple sequences in one search."""
       self.mmseqs_runner.n_cpu = num_cpu
-      #Uniref30+env_db
-      a3m_dict, stdout, stderr = self.mmseqs_runner.query(input_fasta_path, batch=True)
-      logging.info(f"MSA dict {len(a3m_dict)}")
-      for name, a3m in a3m_dict.items():
-          subunit_msa_dir = os.path.join(msa_output_dir, name)
-          os.makedirs(subunit_msa_dir, exist_ok=True)
-          output_a3m_path = os.path.join(subunit_msa_dir, "uniref30_colabfold_envdb_mmseqs_hits.a3m")
-          if not os.path.exists(output_a3m_path) and not self.use_precomputed_msas:
-              logging.info(f"Writing {output_a3m_path}")
-              with open(output_a3m_path, 'w') as f:
-                  f.write(a3m)
-          else:
-              if os.path.exists(output_a3m_path):
-                  logging.info(f"{output_a3m_path} already exists")
-              if self.use_precomputed_msas:
-                  logging.info("Use precomputed MSAs")
-      #Uniref90 search
-      a3m_dict, stdout, stderr = self.mmseqs_runner.query(input_fasta_path, batch=True, uniref90=True)
-      for name, a3m in a3m_dict.items():
-          subunit_msa_dir = os.path.join(msa_output_dir, name)
-          os.makedirs(subunit_msa_dir, exist_ok=True)
-          output_a3m_path = os.path.join(subunit_msa_dir, "uniref90_mmseqs_hits.a3m")
-          if not os.path.exists(output_a3m_path) and not self.use_precomputed_msas:
-              with open(output_a3m_path, 'w') as f:
-                  f.write(a3m)
+      with utils.tmpdir_manager(self.custom_tempdir) as fasta_temp:
+        input_fasta_path = self.check_finished_batch_jobs(input_fasta_path, msa_output_dir, fasta_temp)
+        #Uniref30+env_db
+        if input_fasta_path:
+            a3m_dict, stdout, stderr = self.mmseqs_runner.query(input_fasta_path, batch=True)
+            logging.info(f"MSA dict {len(a3m_dict)}")
+            for name, a3m in a3m_dict.items():
+                subunit_msa_dir = os.path.join(msa_output_dir, name)
+                os.makedirs(subunit_msa_dir, exist_ok=True)
+                output_a3m_path = os.path.join(subunit_msa_dir, "uniref30_colabfold_envdb_mmseqs_hits.a3m")
+                logging.info(f"Writing {output_a3m_path}")
+                with open(output_a3m_path, 'w') as f:
+                    f.write(a3m)
+            #Uniref90 search
+            a3m_dict, stdout, stderr = self.mmseqs_runner.query(input_fasta_path, batch=True, uniref90=True)
+            for name, a3m in a3m_dict.items():
+                subunit_msa_dir = os.path.join(msa_output_dir, name)
+                os.makedirs(subunit_msa_dir, exist_ok=True)
+                output_a3m_path = os.path.join(subunit_msa_dir, "uniref90_mmseqs_hits.a3m")
+                with open(output_a3m_path, 'w') as f:
+                    f.write(a3m)
 
-      #Uniprot search
-      a3m_dict, stdout, stderr = self.mmseqs_runner.query(input_fasta_path, batch=True, uniprot=True)
-      for name, a3m in a3m_dict.items():
-          subunit_msa_dir = os.path.join(msa_output_dir, name)
-          os.makedirs(subunit_msa_dir, exist_ok=True)
-          output_a3m_path = os.path.join(subunit_msa_dir, "uniprot_mmseqs.a3m")
-          if not os.path.exists(output_a3m_path) and not self.use_precomputed_msas:
-              with open(output_a3m_path, 'w') as f:
-                  f.write(a3m)
+            #Uniprot search
+            a3m_dict, stdout, stderr = self.mmseqs_runner.query(input_fasta_path, batch=True, uniprot=True)
+            for name, a3m in a3m_dict.items():
+                subunit_msa_dir = os.path.join(msa_output_dir, name)
+                os.makedirs(subunit_msa_dir, exist_ok=True)
+                output_a3m_path = os.path.join(subunit_msa_dir, "uniprot_mmseqs_hits.a3m")
+                with open(output_a3m_path, 'w') as f:
+                    f.write(a3m)
 
   def process(self,
           input_fasta_path,
@@ -590,6 +635,16 @@ class DataPipeline:
     #If number of CPU > 2 hhblits and jackhmmer jobs can run in parallel. Available CPUs (devided by two) will be forwarded to the
     #hhblits and jackhmmer "tools". In case of mmseqs job not more than 8 CPUs will be used for the jackhmmer job and the rest
     #will be used for mmseqs.
+    logging.info("Selected template searchers:")
+    if self.template_searcher_hhr:
+        logging.info("HHsearch")
+    if self.template_featurizer_hmm:
+        logging.info("HMMsearch")
+    logging.info("Selected template featurizers:")
+    if self.template_featurizer_hhr:
+        logging.info("HHsearch")
+    if self.template_featurizer_hmm:
+        logging.info("HMMsearch")
     mmseqs_cpu, tool_cpu = 1, 1
     if num_cpu > 2:
       if self._use_mmseqs_local:
@@ -687,6 +742,7 @@ class DataPipeline:
                  input_fasta_path,
                  uniref30_colabfold_envdb_out_path,
                  'a3m',
+                 'uniref30_colabfold_envdb',
                  self.use_precomputed_msas))
         elif self._use_mmseqs_api:
             uniref30_colabfold_envdb_out_path = os.path.join(msa_output_dir, 'uniref30_colabfold_envdb_mmseqs_hits.a3m')
@@ -695,6 +751,7 @@ class DataPipeline:
                 input_fasta_path,
                 uniref30_colabfold_envdb_out_path,
                 'a3m',
+                'uniref30_colabfold_envdb',
                 self.use_precomputed_msas))
         else:
             if self._use_small_bfd:
@@ -704,6 +761,7 @@ class DataPipeline:
                     input_fasta_path,
                     bfd_out_path,
                     'sto',
+                    'small_bfd',
                     self.use_precomputed_msas))
 
             else:
@@ -716,6 +774,7 @@ class DataPipeline:
                     input_fasta_path,
                     bfd_out_path,
                     'a3m',
+                    'bfd_uniref30',
                     self.use_precomputed_msas))
 
             mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
@@ -723,6 +782,7 @@ class DataPipeline:
             input_fasta_path,
             mgnify_out_path,
             'sto',
+            'mgnify',
             self.use_precomputed_msas,
             self.mgnify_max_hits))
 
@@ -740,6 +800,7 @@ class DataPipeline:
             input_fasta_path,
             uniref90_out_path,
             'sto',
+            'uniref90',
             self.use_precomputed_msas,
             self.uniref_max_hits))
         if self.multimer:
@@ -748,6 +809,7 @@ class DataPipeline:
                 input_fasta_path,
                 uniprot_out_path,
                 'sto',
+                'uniprot',
                 self.use_precomputed_msas))
 
     logging.debug("Job list")
@@ -756,7 +818,16 @@ class DataPipeline:
         with closing(Pool(2, self.init_worker)) as pool:
             try:
                 results = pool.starmap_async(run_msa_tool, msa_jobs)
-                msa_jobs_results = results.get()
+                msa_jobs_result_list = results.get()
+                msa_jobs_results = {}
+                for item in msa_jobs_result_list:
+                    for k, v in item.items():
+                        if not k in msa_jobs_results:
+                            msa_jobs_results[k] = v
+                        else:
+                            logging.error(f'{k} found twice in results dict.')
+                            raise SystemExit()
+
             except KeyboardInterrupt as e:
                 pool.terminate()
                 pool.join()
@@ -769,7 +840,7 @@ class DataPipeline:
 
     if not no_msa:
         if self._use_mmseqs_local or self._use_mmseqs_api:
-            mmseqs_uniref30_colabfold_envdb_result = msa_jobs_results[0]
+            mmseqs_uniref30_colabfold_envdb_result = msa_jobs_results['uniref30_colabfold_envdb']
             logging.debug("Parsing mmseqs result")
             #logging.debug(mmseqs_uniref30_colabfold_envdb_result)
             uniref30_colabfold_envdb_msa = parsers.parse_a3m(mmseqs_uniref30_colabfold_envdb_result['a3m'])
@@ -783,7 +854,7 @@ class DataPipeline:
                     logging.debug(f"Length of sequence is {len(seq)}")
         else:
             if self._use_small_bfd:
-                jackhmmer_small_bfd_result = msa_jobs_results[0]
+                jackhmmer_small_bfd_result = msa_jobs_results['small_bfd']
                 if 'sto' in jackhmmer_small_bfd_result:
                     bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
                 elif 'a3m' in jackhmmer_small_bfd_result:
@@ -791,10 +862,10 @@ class DataPipeline:
                 else:
                     raise ValueError("Format not known.")
             else:
-                hhblits_bfd_uniref_result = msa_jobs_results[0]
+                hhblits_bfd_uniref_result = msa_jobs_results['bfd_uniref30']
                 bfd_msa = parsers.parse_a3m(hhblits_bfd_uniref_result['a3m'])
 
-            jackhmmer_mgnify_result = msa_jobs_results[1]
+            jackhmmer_mgnify_result = msa_jobs_results['mgnify']
             if 'sto' in jackhmmer_mgnify_result:
                 mgnify_msa = parsers.parse_stockholm(jackhmmer_mgnify_result['sto'])
             elif 'a3m' in jackhmmer_mgnify_result:
@@ -803,10 +874,7 @@ class DataPipeline:
 
 
     if not no_msa or not no_template:
-        if len(msa_jobs) == 1:
-            jackhmmer_uniref90_result = msa_jobs_results[0]
-        else:
-            jackhmmer_uniref90_result = msa_jobs_results[-1]
+        jackhmmer_uniref90_result = msa_jobs_results['uniref90']
         if not 'a3m' in jackhmmer_uniref90_result:
             logging.debug("Parsing stockholm msa")
             uniref90_msa = parsers.parse_stockholm(jackhmmer_uniref90_result['sto'])
@@ -816,6 +884,7 @@ class DataPipeline:
             msa_for_templates = parsers.remove_empty_columns_from_stockholm_msa(
                 msa_for_templates)
         else:
+            logging.debug(jackhmmer_uniref90_result['a3m'])
             uniref90_msa = parsers.parse_a3m(jackhmmer_uniref90_result['a3m'])
             msa_for_templates = jackhmmer_uniref90_result
 
@@ -907,21 +976,25 @@ class DataPipeline:
     elif all([not custom_template_path,
               not no_template,
               self.use_precomputed_msas]):
-        logging.info("Using existing template results")
+        logging.info("Looking for existing template results")
         if self.template_searcher_hhr:
             if os.path.exists(template_result_out_hhr):
+                logging.info(f"Found: {template_result_out_hhr}")
                 with open(template_result_out_hhr, 'rb') as f:
                     templates_result_hhr = pickle.load(f)
             elif os.path.exists(template_result_out):
+                logging.info(f"Found: {template_result_out}")
                 with open(template_result_out, 'rb') as f:
                     templates_result_hhr = pickle.load(f)
             else:
                 templates_result_hhr = None
         if self.template_searcher_hmm:
             if os.path.exists(template_result_out_hmm):
-                with open(template_result_out_hmm, 'rb') as f:
+                logging.info(f"Found: {template_result_out_hmm}")
+                with open(template_result_out_hmm, 'rb') as f:    
                     templates_result_hmm = pickle.load(f)
             elif os.path.exists(template_result_out):
+                logging.info(f"Found: {template_result_out}")
                 with open(template_result_out, 'rb') as f:
                     templates_result_hmm = pickle.load(f)
             else:
@@ -938,12 +1011,14 @@ class DataPipeline:
         else:
             logging.info("Getting templates from pdb hits.")
             if self.template_featurizer_hhr:
+                logging.info("Using HHsearch featurizer.")
                 templates_result_hhr = self.template_featurizer_hhr.get_templates(
                     query_sequence=input_sequence,
                     hits=pdb_template_hits_hhr)
                 with open(template_result_out_hhr, 'wb') as f:
                     pickle.dump(templates_result_hhr, f)
             if self.template_featurizer_hmm:
+                logging.info("Using HMMsearch featurizer.")
                 templates_result_hmm = self.template_featurizer_hmm.get_templates(
                     query_sequence=input_sequence,
                     hits=pdb_template_hits_hmm)
@@ -1008,9 +1083,12 @@ class DataPipeline:
     if self.template_searcher_hhr and self.template_searcher_hmm:
         #In batch MSA mode no feature dict is needed
         return
+    elif no_template:
+        return {**sequence_features, **msa_features, **templates_result.features}
     elif self.template_searcher_hhr:
         return {**sequence_features, **msa_features, **templates_result_hhr.features}
     elif self.template_searcher_hmm:
         return {**sequence_features, **msa_features, **templates_result_hmm.features}
+#   
 
     

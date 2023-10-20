@@ -727,7 +727,7 @@ def _process_single_hit(
         release_dates=release_dates,
         release_date_cutoff=max_template_date)
     t = time.time() - t_0
-    logging.info(f"_assess_hhsearch hit took {t}")
+    logging.debug(f"_assess_hhsearch hit took {t}")
   except PrefilterError as e:
     if strict_error_check or isinstance(e, (DateError, AlignRatioError, LengthError)): # and isinstance(e, (DateError, DuplicateError)):
       # In strict mode we treat some prefilter cases as errors.
@@ -744,7 +744,7 @@ def _process_single_hit(
       hit.query, hit.hit_sequence, hit.indices_hit, hit.indices_query,
       query_sequence)
   t = time.time() - t_0
-  logging.info(f"_build_query_to_hit_index_mapping hit took {t}")
+  logging.debug(f"_build_query_to_hit_index_mapping hit took {t}")
 
   # The mapping is from the query to the actual hit sequence, so we need to
   # remove gaps (which regardless have a missing confidence score).
@@ -760,7 +760,7 @@ def _process_single_hit(
   parsing_result = mmcif_parsing.parse(
       file_id=hit_pdb_code, mmcif_string=cif_string)
   t = time.time() - t_0
-  logging.info(f"_mmcif_parsing took {t}")
+  logging.debug(f"_mmcif_parsing took {t}")
 
   if parsing_result.mmcif_object is not None:
     hit_release_date = datetime.datetime.strptime(
@@ -787,7 +787,7 @@ def _process_single_hit(
         custom_tempdir=custom_tempdir)
     
     t = time.time() - t_0
-    logging.info(f"_extract_template_features took {t}")
+    logging.debug(f"_extract_template_features took {t}")
     if hit.sum_probs is None:
       features['template_sum_probs'] = [0]
     else:

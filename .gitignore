@@ -5,3 +5,5 @@
 alphafold/data/tools/mmseqs_api.py
 alphafold/common/__pycache__/protein.cpython-38.pyc
 alphafold/common/__pycache__/__init__.cpython-38.pyc
+.gitignore
+alphafold/data/tools/mmseqs_test.py

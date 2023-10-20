@@ -221,7 +221,7 @@ class DataPipeline:
       num_cpu: int) -> pipeline.FeatureDict:
     """Runs the monomer pipeline on a single chain."""
     chain_fasta_str = f'>chain_{chain_id}\n{sequence}\n'
-    chain_msa_output_dir = os.path.join(msa_output_dir, chain_id)
+    chain_msa_output_dir = os.path.join(msa_output_dir, description)
     if not os.path.exists(chain_msa_output_dir):
       os.makedirs(chain_msa_output_dir)
     with temp_fasta_file(chain_fasta_str, self.custom_tempdir) as chain_fasta_path:
@@ -253,16 +253,28 @@ class DataPipeline:
     self._uniprot_msa_runner.n_cpu = num_cpu
     if not os.path.exists(out_path) and not os.path.exists(out_path_a3m) and not os.path.exists(out_path_mmseqs):
         result = pipeline.run_msa_tool(
-            self._uniprot_msa_runner, input_fasta_path, out_path, 'sto',
-            self.use_precomputed_msas)
+              self._uniprot_msa_runner,
+              input_fasta_path,
+              out_path,
+              'sto',
+              'uniprot',
+              self.use_precomputed_msas)
         with open(out_path, 'w') as f:
-            f.write(result['sto'])
-    if (os.path.exists(out_path_a3m) and not os.path.exists(out_path)) or os.path.exists(out_path_mmseqs):
+            f.write(result['uniprot']['sto'])
+    if (os.path.exists(out_path_a3m) and not os.path.exists(out_path)):
+        logging.debug(f"Using {out_path_a3m}")
         with open(out_path_a3m, 'r') as f:
             a3m = f.read()
         result = dict(a3m=a3m)
         msa = parsers.parse_a3m(result['a3m'])
+    elif os.path.exists(out_path_mmseqs) and not os.path.exists(out_path_a3m) and not os.path.exists(out_path):
+        logging.debug(f"Using {out_path_mmseqs}")
+        with open(out_path_mmseqs, 'r') as f:
+            a3m = f.read()
+        result = dict(a3m=a3m)
+        msa = parsers.parse_a3m(result['a3m'])
     elif os.path.exists(out_path):
+        logging.debug(f"Using {out_path}")
         with open(out_path, 'r') as f:
             sto = f.read()
         result = dict(sto=sto)
@@ -292,6 +304,7 @@ class DataPipeline:
     input_seqs, input_descs = parsers.parse_fasta(input_fasta_str)
     chain_id_map = _make_chain_id_map(sequences=input_seqs,
                                       descriptions=input_descs)
+    logging.debug(f"precomputed MSAs path is {precomputed_msas_path}")
     if self.precomputed_msas_path:
         pcmsa_map = pipeline.get_pcmsa_map(self.precomputed_msas_path, chain_id_map, self._monomer_data_pipeline.db_preset)
     else:
@@ -313,6 +326,7 @@ class DataPipeline:
             sequence_features[fasta_chain.sequence])
         continue
 
+      logging.debug(f"precomputed msas path {precomputed_msas_path[i]}")
       if precomputed_msas_path[i] in [None, "None", "none"]:
           if chain_id in pcmsa_map:
               precomputed_msas_path[i] = pcmsa_map[chain_id]
