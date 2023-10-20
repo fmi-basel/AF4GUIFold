@@ -190,6 +190,16 @@ class MMSeqs:
             stdout_list, stderr_list = [], []
             self.run_cmds([cmd_create_db], stdout_list, stderr_list)
 
+            if batch:
+                with open(input_fasta_path) as f:
+                    seqs, descs = parse_fasta(f.read())
+                with open(qdb_lookup, 'w') as f:
+                    for i, desc in enumerate(descs):
+                        f.write(f"{i}\t{desc}\t{i}\n")
+                with open(qdb_lookup) as f:
+                    logging.info("Wrote qdb.lookup:")
+                    logging.info(f.read())
+
             if not uniref90 and not uniprot:
                 with utils.tmpdir_manager(self.custom_tempdir) as uniref_tmp_dir, \
                         utils.tmpdir_manager(self.custom_tempdir) as env_tmp_dir:
@@ -267,15 +277,7 @@ class MMSeqs:
                                 self.env_db_suffix1]
 
 
-                    if batch:
-                        with open(input_fasta_path) as f:
-                            seqs, descs = parse_fasta(f.read())
-                        with open(qdb_lookup, 'w') as f:
-                            for i, desc in enumerate(descs):
-                                f.write(f"{i}\t{desc}\t{i}\n")
-                        with open(qdb_lookup) as f:
-                            logging.info("Wrote qdb.lookup:")
-                            logging.info(f.read())
+
 
                     
                     uniref_cmds = []
@@ -513,8 +515,8 @@ class MMSeqs:
                         file_id_name_mapping[name.strip('\n')] = file_id.strip('\n')
 
                 for name, file_id in file_id_name_mapping.items():
-                    logging.info("Query temp dir")
-                    logging.info(os.listdir(query_tmp_dir))
+                    logging.debug("Query temp dir")
+                    logging.debug(os.listdir(query_tmp_dir))
                     with open(os.path.join(query_tmp_dir, f"{file_id}.a3m")) as f:
                         a3m_dict[name] = f.read()
             else:
