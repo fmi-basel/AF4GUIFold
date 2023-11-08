@@ -72,7 +72,7 @@ class DataPipeline:
 
     def __init__(self,
                  monomer_data_pipeline: pipeline.DataPipeline,
-                 batch_mmseqs: bool):
+                 batch_mmseqs):
         """Initializes the data pipeline.
 
         Args:
@@ -83,17 +83,22 @@ class DataPipeline:
         self.use_precomputed_msas = self._monomer_data_pipeline.use_precomputed_msas
         self.custom_tempdir = self._monomer_data_pipeline.custom_tempdir
         self.precomputed_msas_path = self._monomer_data_pipeline.precomputed_msas_path
-        self.batch_mmseqs = batch_mmseqs
         self.result_queue = multiprocessing.Queue()
-        self.semaphore = multiprocessing.Semaphore(20)  # Limit to 20 concurrent processes
+        self.semaphore = multiprocessing.Semaphore(20) 
+        self.process_batch_mmseqs = self._monomer_data_pipeline.process_batch_mmseqs
+        self.batch_mmseqs = batch_mmseqs
 
+    def set_use_precomputed_msas(self, value: bool):
+        self._monomer_data_pipeline.use_precomputed_msas = value
 
+    def set_precomputed_msas_path(self, value: str):
+        self._monomer_data_pipeline.precomputed_msas_path = value
 
     def process_tasks(self, task_list):
         processes = []
         logging.info("Processing in parallel")
         for kwargs in task_list:
-            self.semaphore.acquire()  # Acquire semaphore to limit concurrent processes
+            self.semaphore.acquire() 
             process = multiprocessing.Process(target=self._process_with_semaphore, args=(kwargs,))
             processes.append(process)
             process.start()
@@ -105,7 +110,7 @@ class DataPipeline:
         try:
             self._process_single_chain(**kwargs, result_queue=self.result_queue)
         finally:
-            self.semaphore.release()  # Release semaphore when done
+            self.semaphore.release()
 
     def collect_results(self):
         results = []
@@ -169,13 +174,6 @@ class DataPipeline:
             json.dump(desc_map, f, indent=4, sort_keys=True)
         
         if self.batch_mmseqs:
-            logging.info("Running mmseqs in batch mode")
-            self._monomer_data_pipeline.process_batch_mmseqs(input_fasta_path=input_fasta_path,
-                                                              msa_output_dir=msa_output_dir,
-                                                              num_cpu=num_cpu)
-            #Set to true because all MSAs are calculated in the previous step.
-            self._monomer_data_pipeline.use_precomputed_msas = True
-
             task_list = [{'sequence': sequence,
                           'description': desc,
                           'msa_output_dir': msa_output_dir,

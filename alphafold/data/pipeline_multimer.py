@@ -203,9 +203,16 @@ class DataPipeline:
         binary_path=jackhmmer_binary_path,
         database_path=uniprot_database_path,
         custom_tempdir=self.custom_tempdir)
+    self.process_batch_mmseqs = self._monomer_data_pipeline.process_batch_mmseqs
 
   def init_worker(self):
       signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+  def set_use_precomputed_msas(self, value: bool):
+     self._monomer_data_pipeline.use_precomputed_msas = value
+
+  def set_precomputed_msas_path(self, value: str):
+     self._monomer_data_pipeline.precomputed_msas_path = value
 
   def _process_single_chain(
       self,
@@ -293,11 +300,12 @@ class DataPipeline:
   def process(self,
               input_fasta_path: str,
               msa_output_dir: str,
-              no_msa,
-              no_template,
-              custom_template_path,
-              precomputed_msas_path,
-              num_cpu) -> pipeline.FeatureDict:
+              no_msa: str,
+              no_template: str,
+              custom_template_path: str,
+              precomputed_msas_path: str,
+              num_cpu: int,
+              batch_mmseqs: bool = False) -> pipeline.FeatureDict:
     """Runs alignment tools on the input sequences and creates features."""
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
