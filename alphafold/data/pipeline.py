@@ -1028,9 +1028,9 @@ class DataPipeline:
                     templates_result_hmm = pickle.load(f)
             else:
                 templates_result_hmm = None
-        if self.template_searcher_hhr and not self.template_searcher_hmm:
+        if not self.template_searcher_hhr and not self.template_searcher_hmm:
             logging.error("No template searcher selected")
-            raise SystemExit
+            raise
     if not templates_result_hmm and not templates_result_hhr and not templates_result:
         if not custom_template_path is None:
             logging.info("Getting template from custom file.")
@@ -1055,7 +1055,7 @@ class DataPipeline:
                     pickle.dump(templates_result_hmm, f)
             if not self.template_featurizer_hhr and not self.template_featurizer_hmm:
                 logging.error("No template featurizer selected")
-                raise SystemExit
+                raise
             
 
     sequence_features = make_sequence_features(
