@@ -533,8 +533,6 @@ class DataPipeline:
     self.template_searcher_hmm = template_searcher_hmm
     self.template_featurizer_hhr = template_featurizer_hhr
     self.template_featurizer_hmm = template_featurizer_hmm
-    self.template_searcher_custom = None
-    self.template_featurizer_custom = None
     if self.template_searcher_hhr:
         self.tempalte_searcher = self.template_searcher_hhr
     elif self.template_searcher_hmm:
@@ -910,6 +908,8 @@ class DataPipeline:
 
 
     #Refactored to implement use of a single custom template
+    template_featurizer_custom = None
+    template_searcher_custom = None
     if not custom_template_path is None:
         logging.info("Using custom template")
         if os.path.exists(custom_template_path):
@@ -920,7 +920,7 @@ class DataPipeline:
                     hhalign_binary_path = self.template_searcher_hmm.hhalign_binary_path
                 elif  self.template_searcher_hhr:
                     hhalign_binary_path = self.template_searcher_hhr.hhalign_binary_path
-                self.template_searcher_custom = hhalign.HHAlign(hhalign_binary_path)
+                template_searcher_custom = hhalign.HHAlign(hhalign_binary_path)
                 if not 'a3m' in msa_for_templates:
                     uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(msa_for_templates)
                 else:
@@ -930,7 +930,7 @@ class DataPipeline:
                 pdb_templates_results = []
                 for custom_template in custom_templates:
                     template_sequence = self.get_template_sequence(custom_template)
-                    pdb_templates_result = self.template_searcher_custom.query(template_sequence, uniref90_msa_as_a3m)
+                    pdb_templates_result = template_searcher_custom.query(template_sequence, uniref90_msa_as_a3m)
                     pdb_templates_results.append(pdb_templates_result)
                 pdb_templates_result = '\n'.join(pdb_templates_results)
 
@@ -940,7 +940,7 @@ class DataPipeline:
                     self.template_featurizer_initial = deepcopy(self.template_featurizer_hmm)
 
                 
-                self.template_featurizer_custom = templates.HhsearchHitFeaturizer(
+                template_featurizer_custom = templates.HhsearchHitFeaturizer(
                     mmcif_dir=custom_template_path,
                     max_template_date=self.template_featurizer_initial._max_template_date.strftime("%Y-%m-%d"),
                     max_hits=self.template_featurizer_initial._max_hits,
@@ -949,7 +949,7 @@ class DataPipeline:
                     obsolete_pdbs_path=None,
                     strict_error_check=False,
                     custom_tempdir=self.custom_tempdir)
-                pdb_template_hits_custom = self.template_searcher_custom.get_template_hits(
+                pdb_template_hits_custom = template_searcher_custom.get_template_hits(
                     output_string=pdb_templates_result, input_sequence=input_sequence)
                 logging.info(pdb_template_hits_custom)             
             else:
@@ -1034,7 +1034,7 @@ class DataPipeline:
     if not templates_result_hmm and not templates_result_hhr and not templates_result:
         if not custom_template_path is None:
             logging.info("Getting template from custom file.")
-            templates_result = self.template_featurizer_custom.get_templates(
+            templates_result = template_featurizer_custom.get_templates(
                 query_sequence=input_sequence,
                 hits=pdb_template_hits_custom)
         else:
@@ -1097,7 +1097,7 @@ class DataPipeline:
         logging.info('Final (deduplicated) MSA size: %d empty sequence (as requested).',
                     msa_features['num_alignments'][0])
     if not no_template:
-        if self.template_featurizer_custom:
+        if template_featurizer_custom:
             logging.info('Total number of templates (NB: this can include bad '
                 'templates and is later filtered to top 4): %d.',
                 templates_result.features['template_domain_names'].shape[0])    
@@ -1119,7 +1119,7 @@ class DataPipeline:
         return
     elif no_template:
         return {**sequence_features, **msa_features, **templates_result.features}
-    elif self.template_searcher_custom:
+    elif template_searcher_custom:
         return {**sequence_features, **msa_features, **templates_result.features}
     elif self.template_searcher_hhr:
         return {**sequence_features, **msa_features, **templates_result_hhr.features}
