@@ -1005,8 +1005,9 @@ class DataPipeline:
     elif all([not custom_template_path,
             not no_template,
             self.use_precomputed_msas]):
-        logging.info("Looking for existing template results")
+        
         if self.template_searcher_hhr:
+            logging.info("Looking for existing template results from hhr_tempalte_searcher")
             if os.path.exists(template_result_out_hhr):
                 logging.info(f"Found: {template_result_out_hhr}")
                 with open(template_result_out_hhr, 'rb') as f:
@@ -1016,8 +1017,10 @@ class DataPipeline:
                 with open(template_result_out, 'rb') as f:
                     templates_result_hhr = pickle.load(f)
             else:
+                logging.info("Nothing found!")
                 templates_result_hhr = None
         if self.template_searcher_hmm:
+            logging.info("Looking for existing template results from hhm_tempalte_searcher")
             if os.path.exists(template_result_out_hmm):
                 logging.info(f"Found: {template_result_out_hmm}")
                 with open(template_result_out_hmm, 'rb') as f:    
@@ -1027,9 +1030,10 @@ class DataPipeline:
                 with open(template_result_out, 'rb') as f:
                     templates_result_hmm = pickle.load(f)
             else:
+                logging.info("Nothing found!")
                 templates_result_hmm = None
         if not self.template_searcher_hhr and not self.template_searcher_hmm:
-            logging.error("No template searcher selected")
+            logging.error(f"No template searcher selected {self.template_searcher_hhr}, {self.template_searcher_hmm}")
             raise
     if not templates_result_hmm and not templates_result_hhr and not templates_result:
         if not custom_template_path is None:
