@@ -177,9 +177,9 @@ def create_precomputed_msas_mapping(precomputed_msas_path, db_preset):
         expected_files['small_bfd'] = ['small_bfd_hits',
                                     'uniref90_hits',
                                     'mgnify_hits']
-        expected_files['colabfold*_web'] = ['uniref30_colabfold_envdb',    
+        expected_files['colabfold_web'] = ['uniref30_colabfold_envdb',    
                                     'uniref90']
-        expected_files['colabfold*_local'] = ['uniref30_colabfold_envdb',
+        expected_files['colabfold_local'] = ['uniref30_colabfold_envdb',
                                     'uniref90_mmseqs_hits']
         for expected_file in expected_files[db_preset]:
             found = False
@@ -490,8 +490,8 @@ class DataPipeline:
                multimer: bool = False):
     """Initializes the data pipeline."""
     self._use_small_bfd = db_preset == 'reduced_dbs'
-    self._use_mmseqs_local = db_preset == 'colabfold*_local'
-    self._use_mmseqs_api = db_preset == 'colabfold*_web'
+    self._use_mmseqs_local = db_preset == 'colabfold_local'
+    self._use_mmseqs_api = db_preset == 'colabfold_web'
     logging.debug(f"_use_small_bfd: {self._use_small_bfd}, _use_mmseqs_local: {self._use_mmseqs_local}, _use_mmseqs_api: {self._use_mmseqs_api}")
     self.db_preset = db_preset
     self.jackhmmer_uniref90_runner = jackhmmer.Jackhmmer(
