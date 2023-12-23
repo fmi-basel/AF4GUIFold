@@ -34,6 +34,7 @@ from alphafold.data import msa_pairing
 from alphafold.data import parsers
 from alphafold.data import pipeline
 from alphafold.data.tools import jackhmmer
+from alphafold.data.parsers import Msa
 import numpy as np
 import signal
 from shutil import copyfile
@@ -242,17 +243,24 @@ class DataPipeline:
           custom_template_path=custom_template_path,
           precomputed_msas_path=precomputed_msas_path,
           num_cpu=num_cpu)
-
+      
+      if no_msa:
+        empty_msa = Msa(sequences=[sequence],
+         deletion_matrix=[[0 for _ in range(len(sequence))]],
+         descriptions=[f"chain_{chain_id}"])
+      else:
+        empty_msa = None
       # We only construct the pairing features if there are 2 or more unique
       # sequences.
       if not is_homomer_or_monomer:
         all_seq_msa_features = self._all_seq_msa_features(chain_fasta_path,
                                                           chain_msa_output_dir,
-                                                          num_cpu)
+                                                          num_cpu,
+                                                          empty_msa)
         chain_features.update(all_seq_msa_features)
     return chain_features
 
-  def _all_seq_msa_features(self, input_fasta_path, msa_output_dir, num_cpu):
+  def _all_seq_msa_features(self, input_fasta_path, msa_output_dir, num_cpu, empty_msa):
     """Get MSA features for unclustered uniprot, for pairing."""
     out_path = os.path.join(msa_output_dir, 'uniprot_hits.sto')
     out_path_a3m = os.path.join(msa_output_dir, 'uniprot_hits.a3m')
@@ -289,10 +297,17 @@ class DataPipeline:
     else:
         raise ValueError("uniprot_hits msa file not found.")
     msa = msa.truncate(max_seqs=self._max_uniprot_hits)
-    all_seq_features = pipeline.make_msa_features([msa])
+    if empty_msa is None:
+      logging.debug(f"empty_msa is {empty_msa}")
+      all_seq_features = pipeline.make_msa_features([msa])
+    else:
+      logging.info("Using empty MSA for pairing")
+      all_seq_features = pipeline.make_msa_features([empty_msa])
     valid_feats = msa_pairing.MSA_FEATURES + (
         'msa_species_identifiers',
     )
+    logging.info('MSA size of uniprot search: %d sequences.',
+        all_seq_features['num_alignments'][0])
     feats = {f'{k}_all_seq': v for k, v in all_seq_features.items()
              if k in valid_feats}
     return feats
@@ -357,11 +372,9 @@ class DataPipeline:
       sequence_features[fasta_chain.sequence] = chain_features
 
     all_chain_features = add_assembly_features(all_chain_features)
-
     np_example = feature_processing.pair_and_merge(
       all_chain_features=all_chain_features)
 
     # Pad MSA to avoid zero-sized extra_msa.
     np_example = pad_msa(np_example, 512)
-
     return np_example
