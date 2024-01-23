@@ -672,15 +672,15 @@ class DataPipeline:
             else:
                 tool_cpu = int(num_cpu / 2)
                 mmseqs_cpu = int(num_cpu / 2)
-    elif self._use_mmseqs_api:
-        if num_cpu > 8:
-            tool_cpu = num_cpu - 1
-            mmseqs_cpu = 1
+        elif self._use_mmseqs_api:
+            if num_cpu > 8:
+                tool_cpu = num_cpu - 1
+                mmseqs_cpu = 1
+            else:
+                tool_cpu = num_cpu - 1
+                mmseqs_cpu = 1
         else:
-            tool_cpu = num_cpu - 1
-            mmseqs_cpu = 1
-    else:
-        tool_cpu = int(num_cpu / 2)
+            tool_cpu = int(num_cpu / 2)
 
     with open(input_fasta_path) as f:
         input_fasta_str = f.read()
