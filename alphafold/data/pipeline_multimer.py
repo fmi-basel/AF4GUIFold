@@ -205,6 +205,7 @@ class DataPipeline:
         database_path=uniprot_database_path,
         custom_tempdir=self.custom_tempdir)
     self.process_batch_mmseqs = self._monomer_data_pipeline.process_batch_mmseqs
+    self.accession_seq_id_mapping = self._monomer_data_pipeline.accession_seq_id_mapping
 
   def init_worker(self):
       signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -266,6 +267,7 @@ class DataPipeline:
     out_path_a3m = os.path.join(msa_output_dir, 'uniprot_hits.a3m')
     out_path_mmseqs = os.path.join(msa_output_dir, 'uniprot_mmseqs_hits.a3m')
     self._uniprot_msa_runner.n_cpu = num_cpu
+    mmseqs_msa = False
     if not os.path.exists(out_path) and not os.path.exists(out_path_a3m) and not os.path.exists(out_path_mmseqs):
         result = pipeline.run_msa_tool(
               self._uniprot_msa_runner,
@@ -288,6 +290,7 @@ class DataPipeline:
             a3m = f.read()
         result = dict(a3m=a3m)
         msa = parsers.parse_a3m(result['a3m'])
+        mmseqs_msa = True
     elif os.path.exists(out_path):
         logging.debug(f"Using {out_path}")
         with open(out_path, 'r') as f:
@@ -299,7 +302,10 @@ class DataPipeline:
     msa = msa.truncate(max_seqs=self._max_uniprot_hits)
     if empty_msa is None:
       logging.debug(f"empty_msa is {empty_msa}")
-      all_seq_features = pipeline.make_msa_features([msa])
+      if mmseqs_msa:
+        all_seq_features = pipeline.make_msa_features([msa], accession_seq_id_mapping=self.accession_seq_id_mapping)
+      else:
+        all_seq_features = pipeline.make_msa_features([msa])
     else:
       logging.info("Using empty MSA for pairing")
       all_seq_features = pipeline.make_msa_features([empty_msa])

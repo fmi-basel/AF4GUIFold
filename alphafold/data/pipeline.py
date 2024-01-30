@@ -74,7 +74,7 @@ def make_sequence_features(
   return features
 
 
-def make_msa_features(msas: Sequence[parsers.Msa]) -> FeatureDict:
+def make_msa_features(msas: Sequence[parsers.Msa], accession_seq_id_mapping=None) -> FeatureDict:
     """Constructs a feature dict of MSA features."""
     if not msas:
         raise ValueError('At least one MSA must be provided.')
@@ -93,10 +93,16 @@ def make_msa_features(msas: Sequence[parsers.Msa]) -> FeatureDict:
             int_msa.append(
                 [residue_constants.HHBLITS_AA_TO_ID[res] for res in sequence])
             deletion_matrix.append(msa.deletion_matrix[sequence_index])
-            identifiers = msa_identifiers.get_identifiers(
-                msa.descriptions[sequence_index])
+            if not accession_seq_id_mapping is None:
+                logging.debug("Getting species identifiers from mapping")
+                identifiers = msa_identifiers.get_identifiers_mmseqs(msa.descriptions[sequence_index], accession_seq_id_mapping)
+            else:
+                logging.debug("Getting species identifiers from MSA")
+                identifiers = msa_identifiers.get_identifiers(
+                    msa.descriptions[sequence_index])
             species_ids.append(identifiers.species_id.encode('utf-8'))
-
+    num_mapped_species_ids = [id for id in species_ids if len(id) > 0]
+    logging.info(f"{len(num_mapped_species_ids)}/{len(identifiers)} species identifiers could be extracted")
     num_res = len(msas[0].sequences[0])
     num_alignments = len(int_msa)
     features = {}
@@ -174,7 +180,7 @@ def create_precomputed_msas_mapping(precomputed_msas_path, db_preset):
         expected_files['full_dbs'] = ['bfd_uniref_hits',
                                     'uniref90_hits',
                                     'mgnify_hits']
-        expected_files['small_bfd'] = ['small_bfd_hits',
+        expected_files['reduced_dbs'] = ['small_bfd_hits',
                                     'uniref90_hits',
                                     'mgnify_hits']
         expected_files['colabfold_web'] = ['uniref30_colabfold_envdb',    
@@ -487,6 +493,7 @@ class DataPipeline:
                use_precomputed_msas: bool = False,
                custom_tempdir: str = None,
                precomputed_msas_path: str = None,
+               accession_seq_id_mapping: dict = None,
                multimer: bool = False):
     """Initializes the data pipeline."""
     self._use_small_bfd = db_preset == 'reduced_dbs'
@@ -542,6 +549,7 @@ class DataPipeline:
     self.use_precomputed_msas = use_precomputed_msas
     self.custom_tempdir = custom_tempdir
     self.precomputed_msas_path = precomputed_msas_path
+    self.accession_seq_id_mapping = accession_seq_id_mapping
     self.multimer = multimer
 
   def set_use_precomputed_msas(self, value: bool):
@@ -1076,11 +1084,12 @@ class DataPipeline:
     else:
         logging.debug("Using MSA")
         if self._use_mmseqs_local or self._use_mmseqs_api:
+            logging.info("MSA features from mmseqs. ")
             logging.debug(f"Shape uniref90 sequences {np.array(uniref90_msa.sequences).shape}\n\
                 Shape uniref90 deletion matrix {np.array(uniref90_msa.deletion_matrix).shape}\n\
                 Shape colabfold sequences {np.array( uniref30_colabfold_envdb_msa.sequences).shape}\n\
                 Shape colabfold deletion matrix {np.array(uniref30_colabfold_envdb_msa.deletion_matrix).shape}")
-            msa_features = make_msa_features((uniref90_msa, uniref30_colabfold_envdb_msa))
+            msa_features = make_msa_features((uniref90_msa, uniref30_colabfold_envdb_msa), self.accession_seq_id_mapping)
             logging.debug(f"Shape uniref90 sequences {np.array(uniref90_msa.sequences).shape}\n\
                 Shape uniref90 deletion matrix {np.array(uniref90_msa.deletion_matrix).shape}\n\
                 Shape colabfold sequences {np.array( uniref30_colabfold_envdb_msa.sequences).shape}\n\

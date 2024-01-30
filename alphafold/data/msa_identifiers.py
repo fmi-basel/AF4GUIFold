@@ -15,9 +15,11 @@
 """Utilities for extracting identifiers from MSA sequence descriptions."""
 
 import dataclasses
+import os
+import pickle
 import re
 from typing import Optional
-
+from absl import logging
 
 # Sequences coming from UniProtKB database come in the
 # `db|UniqueIdentifier|EntryName` format, e.g. `tr|A0A146SKV9|A0A146SKV9_FUNHE`
@@ -49,6 +51,70 @@ _UNIPROT_PATTERN = re.compile(
 @dataclasses.dataclass(frozen=True)
 class Identifiers:
   species_id: str = ''
+
+def create_accession_seq_id_mapping(uniprot_db):
+  output_path = os.path.join(os.path.dirname(uniprot_db), 'accession_seq_id_mapping.pkl')
+  if not os.path.exists(output_path):
+    logging.info("Creating accession species mapping from uniprot database. This can take several minutes.")
+    accession_seq_id_mapping = {}
+
+
+    chunk_size = 2**22
+
+    with open(uniprot_db, 'r') as f:
+        accession_seq_id_mapping = {}
+        line_count = 0
+        no_match_count = 0
+        match_count = 0
+        line_count_match = 0
+        while True:
+            lines = f.readlines(2**22)
+
+            if not lines:
+                #print(lines)
+                #print(f'break after {line_count}')
+                break
+
+            for l in lines:
+                line_count += 1
+                if l.startswith('>'):
+                    line_count_match += 1
+                    sequence_identifier = l[1:].split()[0]
+                    matches = re.search(_UNIPROT_PATTERN, sequence_identifier.strip())
+                    if matches:
+                        accession_seq_id_mapping[matches.group('AccessionIdentifier')] = matches.group('SpeciesIdentifier')
+                        match_count += 1
+                    else:
+                      no_match_count += 1
+            #print(f"Dict size {len(accession_seq_id_mapping)}")
+            #print(f"Lines with > found: {line_count_match}, No matches: {no_match_count}, Matches: {match_count}")
+    with open(output_path, 'wb') as pkl_file:
+      logging.info(f"Saving to {output_path}")
+      pickle.dump(accession_seq_id_mapping, pkl_file)
+  else:
+    with open(output_path, 'rb') as pkl_file:
+       accession_seq_id_mapping = pickle.load(pkl_file)
+    logging.info(f"Loaded accession species mapping with length {len(accession_seq_id_mapping)} from {output_path}")
+  return accession_seq_id_mapping
+
+def get_identifiers_mmseqs(description: str, accession_seq_id_mapping) -> Identifiers:
+  """Computes extra MSA features from the description."""
+  m = re.search(r'^(?:uniref90_|UniRef90_)?(\w+)\s+', description)
+  if m:
+    accession = m.group(1)
+    try:
+      sequence_identifier = accession_seq_id_mapping[accession]
+    except KeyError:
+      logging.warning(f"{accession} not found in accession dict")
+      sequence_identifier = None
+  else:
+     logging.warning(f"No match in {description}")
+     sequence_identifier = None
+  if sequence_identifier is None:
+    return Identifiers()
+  else:
+    return Identifiers(species_id=sequence_identifier)
+
 
 
 def _parse_sequence_identifier(msa_sequence_identifier: str) -> Identifiers:
