@@ -50,7 +50,7 @@ class MMSeqs:
                  diff: int = 3000,
                  qsc: float = -20.0,
                  max_accept: int = 1000000,
-                 s: float = 8,
+                 s: float = 8.0,
                  db_load_mode: int = 0,
                  n_cpu: int = 1,
                  custom_tempdir=None,
@@ -166,7 +166,13 @@ class MMSeqs:
                                     "-s", self.s,
                                     "-e", "0.1",
                                     "--max-seqs", "10000",]
-                search_param_uniref90_uniprot = ["--num-iterations", "3",
+                search_param_uniprot = ["--num-iterations", "3",
+                                    "--db-load-mode", self.db_load_mode,
+                                    "-a",
+                                    "-s", self.s,
+                                    "-e", "0.001",
+                                    "--max-seqs", "10000",]
+                search_param_uniref90 = ["--num-iterations", "3",
                                     "--db-load-mode", self.db_load_mode,
                                     "-a",
                                     "-s", self.s,
@@ -397,7 +403,7 @@ class MMSeqs:
                                                     os.path.join(uniref90_tmp_dir, "res"),
                                                     os.path.join(uniref90_tmp_dir, "tmp"),
                                                     "--threads", self.n_cpu,
-                                                    ] + search_param_uniref90_uniprot
+                                                    ] + search_param_uniref90
 
 
                         cmd_uniref90_filterresult = [self.binary_path,
@@ -461,7 +467,7 @@ class MMSeqs:
                                                     os.path.join(uniprot_tmp_dir, "res"),
                                                     os.path.join(uniprot_tmp_dir, "tmp"),
                                                     "--threads", self.n_cpu,
-                                                    ] + search_param_uniref90_uniprot
+                                                    ] + search_param_uniprot
 
                         cmd_uniprot_filterresult = [self.binary_path,
                                         "filterresult",
@@ -481,7 +487,7 @@ class MMSeqs:
                                         "result2msa",
                                         qdb_path,
                                         self.uniprot_db_suffix1,
-                                        os.path.join(uniprot_tmp_dir, "res_filter"),
+                                        os.path.join(uniprot_tmp_dir, "res"),
                                         uniprot_a3m_path,
                                         "--msa-format-mode", "6",
                                         "--db-load-mode", self.db_load_mode,
@@ -502,7 +508,7 @@ class MMSeqs:
                                 #cmd_uniprot_mvdb,
                                 #cmd_uniprot_lndb,
                                 #cmd_uniprot_align,
-                                cmd_uniprot_filterresult,
+                                #cmd_uniprot_filterresult,
                                 cmd_uniprot_result2msa,
                                 cmd_uniprot_unpack])
                         

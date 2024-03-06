@@ -38,7 +38,7 @@ from alphafold.data.parsers import Msa
 import numpy as np
 import signal
 from shutil import copyfile
-
+import multiprocessing
 # Internal import (7716).
 
 
@@ -183,7 +183,8 @@ class DataPipeline:
                monomer_data_pipeline: pipeline.DataPipeline,
                jackhmmer_binary_path: str,
                uniprot_database_path: str,
-               max_uniprot_hits: int = 50000):
+               max_uniprot_hits: int = 50000,
+               pairing: str = 'paired'):
     """Initializes the data pipeline.
 
     Args:
@@ -194,6 +195,7 @@ class DataPipeline:
         will be searched with jackhmmer and used for MSA pairing.
       max_uniprot_hits: The maximum number of hits to return from uniprot.
       use_precomputed_msas: Whether to use pre-existing MSAs; see run_alphafold.
+      pairing: MSA pairing protocol
     """
     self._monomer_data_pipeline = monomer_data_pipeline
     self._max_uniprot_hits = max_uniprot_hits
@@ -205,7 +207,9 @@ class DataPipeline:
         database_path=uniprot_database_path,
         custom_tempdir=self.custom_tempdir)
     self.process_batch_mmseqs = self._monomer_data_pipeline.process_batch_mmseqs
-    self.accession_seq_id_mapping = self._monomer_data_pipeline.accession_seq_id_mapping
+    self.accession_species_db = self._monomer_data_pipeline.accession_species_db
+    self.msa_stats = self._monomer_data_pipeline.msa_stats
+    self.pairing = pairing
 
   def init_worker(self):
       signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -227,41 +231,59 @@ class DataPipeline:
       no_template: bool,
       custom_template_path: str,
       precomputed_msas_path: str,
-      num_cpu: int) -> pipeline.FeatureDict:
+      num_cpu: int,
+      file_lock: dict) -> pipeline.FeatureDict:
     """Runs the monomer pipeline on a single chain."""
-    chain_fasta_str = f'>chain_{chain_id}\n{sequence}\n'
+    chain_fasta_str = f'>{description}\n{sequence}\n'
     chain_msa_output_dir = os.path.join(msa_output_dir, description)
-    if not os.path.exists(chain_msa_output_dir):
-      os.makedirs(chain_msa_output_dir)
-    with temp_fasta_file(chain_fasta_str, self.custom_tempdir) as chain_fasta_path:
-      logging.info('Running monomer pipeline on chain %s: %s',
-                   chain_id, description)
-      chain_features = self._monomer_data_pipeline.process(
-          input_fasta_path=chain_fasta_path,
-          msa_output_dir=chain_msa_output_dir,
-          no_msa=no_msa,
-          no_template=no_template,
-          custom_template_path=custom_template_path,
-          precomputed_msas_path=precomputed_msas_path,
-          num_cpu=num_cpu)
-      
-      if no_msa:
-        empty_msa = Msa(sequences=[sequence],
-         deletion_matrix=[[0 for _ in range(len(sequence))]],
-         descriptions=[f"chain_{chain_id}"])
+    if file_lock:
+      if isinstance(file_lock, dict):
+          lock = file_lock[description]
       else:
-        empty_msa = None
-      # We only construct the pairing features if there are 2 or more unique
-      # sequences.
-      if not is_homomer_or_monomer:
-        all_seq_msa_features = self._all_seq_msa_features(chain_fasta_path,
-                                                          chain_msa_output_dir,
-                                                          num_cpu,
-                                                          empty_msa)
-        chain_features.update(all_seq_msa_features)
+          lock = file_lock
+    else:
+       lock = None
+    try:
+      if lock:
+        lock.acquire()
+        logging.info(f"File lock acquired for {description}")
+      if not os.path.exists(chain_msa_output_dir):
+        os.makedirs(chain_msa_output_dir)
+
+      with temp_fasta_file(chain_fasta_str, self.custom_tempdir) as chain_fasta_path:
+        logging.info('Running monomer pipeline on chain %s: %s',
+                    chain_id, description)
+        chain_features = self._monomer_data_pipeline.process(
+            input_fasta_path=chain_fasta_path,
+            msa_output_dir=chain_msa_output_dir,
+            no_msa=no_msa,
+            no_template=no_template,
+            custom_template_path=custom_template_path,
+            precomputed_msas_path=precomputed_msas_path,
+            num_cpu=num_cpu,
+            file_lock=lock)
+        
+        if no_msa:
+          empty_msa = Msa(sequences=[sequence],
+          deletion_matrix=[[0 for _ in range(len(sequence))]],
+          descriptions=[f"chain_{chain_id}"])
+        else:
+          empty_msa = None
+        # We only construct the pairing features if there are 2 or more unique
+        # sequences.
+        if not is_homomer_or_monomer:
+          all_seq_msa_features = self._all_seq_msa_features(chain_fasta_path,
+                                                            chain_msa_output_dir,
+                                                            num_cpu,
+                                                            empty_msa,
+                                                            description)
+          chain_features.update(all_seq_msa_features)
+    finally:
+      if lock:
+          lock.release()
     return chain_features
 
-  def _all_seq_msa_features(self, input_fasta_path, msa_output_dir, num_cpu, empty_msa):
+  def _all_seq_msa_features(self, input_fasta_path, msa_output_dir, num_cpu, empty_msa, description):
     """Get MSA features for unclustered uniprot, for pairing."""
     out_path = os.path.join(msa_output_dir, 'uniprot_hits.sto')
     out_path_a3m = os.path.join(msa_output_dir, 'uniprot_hits.a3m')
@@ -303,8 +325,10 @@ class DataPipeline:
     if empty_msa is None:
       logging.debug(f"empty_msa is {empty_msa}")
       if mmseqs_msa:
-        all_seq_features = pipeline.make_msa_features([msa], accession_seq_id_mapping=self.accession_seq_id_mapping)
+        logging.info("Generating msa features for uniprot search with accession_species_db")
+        all_seq_features = pipeline.make_msa_features([msa], self.accession_species_db)
       else:
+        logging.info("Generating msa features for uniprot search")
         all_seq_features = pipeline.make_msa_features([msa])
     else:
       logging.info("Using empty MSA for pairing")
@@ -312,8 +336,11 @@ class DataPipeline:
     valid_feats = msa_pairing.MSA_FEATURES + (
         'msa_species_identifiers',
     )
-    logging.info('MSA size of uniprot search: %d sequences.',
-        all_seq_features['num_alignments'][0])
+    logging.info('Uniprot MSA size: %d sequences.',
+        len(msa))
+    if not description in self.msa_stats:
+       self.msa_stats[description] = {}
+    self.msa_stats[description]['uniprot'] = len(msa)
     feats = {f'{k}_all_seq': v for k, v in all_seq_features.items()
              if k in valid_feats}
     return feats
@@ -326,7 +353,9 @@ class DataPipeline:
               custom_template_path: str,
               precomputed_msas_path: str,
               num_cpu: int,
-              batch_mmseqs: bool = False) -> pipeline.FeatureDict:
+              batch_mmseqs: bool = False,
+              paired_unpaired: bool = True,
+              file_lock = None) -> pipeline.FeatureDict:
     """Runs alignment tools on the input sequences and creates features."""
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
@@ -370,7 +399,8 @@ class DataPipeline:
             no_template=no_template[i],
             custom_template_path=custom_template_path[i],
             precomputed_msas_path=precomputed_msas_path[i],
-            num_cpu=num_cpu)
+            num_cpu=num_cpu,
+            file_lock=file_lock)
 
       chain_features = convert_monomer_features(chain_features,
                                               chain_id=chain_id)
@@ -378,8 +408,45 @@ class DataPipeline:
       sequence_features[fasta_chain.sequence] = chain_features
 
     all_chain_features = add_assembly_features(all_chain_features)
+    all_chain_features_no_species = copy.deepcopy(all_chain_features)
     np_example = feature_processing.pair_and_merge(
       all_chain_features=all_chain_features)
+    
+    for i, item in enumerate(np_example['msa']):
+        if np.all(item != 21):
+          logging.info(f"Index of full sequence: {i}")
+    
+    #Stack unpaired MSAs below paired MSAs
+    if self.pairing == 'paired+unpaired' and not is_homomer_or_monomer:
+      logging.info("Preparing paired+unpaired MSA")
+      for chain in all_chain_features_no_species.keys():
+        all_chain_features_no_species[chain]['msa_species_identifiers_all_seq'] = np.array([b'' for x in all_chain_features[chain]['msa_species_identifiers_all_seq']])
+        all_chain_features_no_species[chain]['msa_species_identifiers'] = np.array([b'' for x in all_chain_features[chain]['msa_species_identifiers']])
+      np_example_unpaired = feature_processing.pair_and_merge(
+        all_chain_features=all_chain_features_no_species)
+      np_example_paired = copy.deepcopy(np_example)
+      for key in ['msa',  'deletion_matrix', 'msa_mask', 'bert_mask']:
+        np_example[key] = np.vstack((np_example_paired[key], np_example_unpaired[key][1:]))
+      for key in ['cluster_bias_mask']:
+        np_example[key] = np.concatenate((np_example_paired[key], np_example_unpaired[key][1:]), axis=0)
+      for i, item in enumerate(np_example['msa']):
+        if np.all(item != 21):
+          logging.info(f"Index of full sequence after concat: {i}")
+      #deduplicate unpaired rows
+      _, unique_indices = np.unique(np_example['msa'], axis=0, return_index=True)
+      mask_duplicates = np.full(np_example['msa'].shape[0], True)
+      mask_duplicates[unique_indices] = False
+      np_example['msa'] = np_example['msa'][sorted(unique_indices)]
+      removed_indices = np.where(mask_duplicates)[0]
+      for key in ['deletion_matrix', 'msa_mask', 'bert_mask', 'cluster_bias_mask']:
+         np_example[key] = np_example[key][unique_indices]
+      logging.info(f"{len(removed_indices)} duplicated sequences removed")
+      logging.debug("Removed indices")
+      logging.debug(removed_indices)
+      for i, item in enumerate(np_example['msa']):
+        if np.all(item != 21):
+          logging.info(f"Index of full sequence: {i}")
+         
 
     # Pad MSA to avoid zero-sized extra_msa.
     np_example = pad_msa(np_example, 512)

@@ -18,6 +18,7 @@ import collections
 import functools
 import string
 from typing import Any, Dict, Iterable, List, Sequence
+from absl import logging
 
 from alphafold.common import residue_constants
 from alphafold.data import pipeline
@@ -225,6 +226,9 @@ def pair_sequences(examples: List[pipeline.FeatureDict]
       num_examples: np.array(paired_msa_rows) for
       num_examples, paired_msa_rows in all_paired_msa_rows_dict.items()
   }
+  for k, v in all_paired_msa_rows_dict.items():
+    if int(k) > 1:
+      logging.info(f"Number of paired sequences common in {k} subunits: {len(v)}")
   return all_paired_msa_rows_dict
 
 

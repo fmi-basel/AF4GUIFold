@@ -87,6 +87,7 @@ class DataPipeline:
         self.semaphore = multiprocessing.Semaphore(20) 
         self.process_batch_mmseqs = self._monomer_data_pipeline.process_batch_mmseqs
         self.batch_mmseqs = batch_mmseqs
+        self.msa_stats = self._monomer_data_pipeline.msa_stats
 
     def set_use_precomputed_msas(self, value: bool):
         self._monomer_data_pipeline.use_precomputed_msas = value
@@ -161,7 +162,8 @@ class DataPipeline:
                 no_template: str,
                 custom_template_path: str,
                 precomputed_msas_path: str,
-                num_cpu: int) -> pipeline.FeatureDict:
+                num_cpu: int,
+                file_lock = None) -> pipeline.FeatureDict:
         """Runs alignment tools on the input sequences and creates features."""
         with open(input_fasta_path) as f:
             input_fasta_str = f.read()
