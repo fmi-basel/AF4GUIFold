@@ -11,12 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
+
 
 """Parses the mmCIF file format."""
 import collections
 import dataclasses
 import functools
 import io
+import traceback
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from absl import logging
@@ -273,6 +277,7 @@ def parse(*,
 
     return ParsingResult(mmcif_object=mmcif_object, errors=errors)
   except Exception as e:  # pylint:disable=broad-except
+    traceback.print_exc()
     errors[(file_id, '')] = e
     if not catch_all_errors:
       raise

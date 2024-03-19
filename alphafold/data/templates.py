@@ -17,6 +17,7 @@
 
 """Functions for getting templates and calculating template features."""
 import abc
+import collections
 from contextlib import closing
 import dataclasses
 import datetime
@@ -37,6 +38,7 @@ from alphafold.data import parsers
 from alphafold.data.tools import kalign
 import numpy as np
 
+from Bio.PDB import MMCIFParser, MMCIFIO, Structure, Model, Chain, Atom
 # Internal import (7716).
 
 
@@ -301,6 +303,210 @@ def _find_template_in_pdb(
       'chain_to_seqres: %s' % (pdb_id, template_chain_id, template_sequence,
                                mmcif_object.chain_to_seqres))
 
+def _map_multichain_template_to_sequences(
+    sequences: list,
+    multichain_template_path: str,
+    auth_to_mmcif_chain_id_mapping: dict,
+    kalign_binary_path: str,
+    custom_tempdir: str,
+    ):
+    chain_template_sequence_mapping = {}
+    cif_string = _read_file(multichain_template_path)
+
+
+
+    result = mmcif_parsing.parse(
+        file_id=os.path.splitext(os.path.basename(multichain_template_path))[0], mmcif_string=cif_string)
+    
+    mmcif_object = result.mmcif_object
+
+    chain_template_sequence_mapping = mmcif_object.chain_to_seqres
+       
+    aligner = kalign.Kalign(binary_path=kalign_binary_path, custom_tempdir=custom_tempdir)
+
+    alignment_score_dict = {}
+    chain_query_index_mapping = {}
+    mapped_queries_for_chain = {}
+    for sequence_index, query_sequence in enumerate(sequences):
+      for chain, template_sequence in chain_template_sequence_mapping.items():
+        # Align sequences
+        parsed_a3m = parsers.parse_a3m(
+            aligner.align([query_sequence, template_sequence]))
+        query_sequence_aligned, template_sequence_aligned = parsed_a3m.sequences
+
+        # Count aligned residues
+        num_same = 0
+        for query_aa, template_aa in zip(
+            query_sequence_aligned, template_sequence_aligned):
+          if query_aa != '-' and template_aa != '-':
+            if query_aa == template_aa:
+              num_same += 1
+
+        # Calculate alignment score
+        score = float(num_same) / min(len(query_sequence), len(template_sequence))
+
+        # Check if the chain has been mapped before
+        if chain in mapped_queries_for_chain:
+            # Check if the current query sequence has been mapped for this chain
+            if sequence_index not in mapped_queries_for_chain[chain]:
+                # Update the mapping if the new score is higher
+                if score > alignment_score_dict[chain]:
+                    alignment_score_dict[chain] = score
+                    chain_query_index_mapping[chain] = sequence_index
+                    mapped_queries_for_chain[chain].add(sequence_index)
+        else:
+            # Initialize the mapping for this chain and add the current query sequence
+            alignment_score_dict[chain] = score
+            chain_query_index_mapping[chain] = sequence_index
+            mapped_queries_for_chain[chain] = {sequence_index}
+
+    mapped_queries_for_chain = {k: list(v)[-1] for k, v in mapped_queries_for_chain.items()}
+
+    return mapped_queries_for_chain
+      
+def _get_output_cif(chain):
+  if len(chain) == 1:
+    output_str = f'{chain}000'
+  elif len(chain) == 2:
+    output_str = f'{chain}00'
+  elif len(chain) == 3:
+    output_str = f'{chain}0'
+  elif len(chain) >= 4:
+    raise ValueError("Chain id too long.")
+  
+  output_str = output_str.lower()
+  output_dir = os.path.join("multichain_custom_templates", output_str)
+  if not os.path.exists(output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+  output_path = os.path.join(output_dir, f'{output_str.lower()}.cif')
+  return output_path
+
+def _extract_chain_from_cif(input_cif, chain_id):
+    # Parse the input CIF file
+    parser = MMCIFParser()
+    structure = parser.get_structure("structure", input_cif)
+
+    # Iterate over models and chains to find the desired chain
+    for model in structure:
+        for chain in model:
+            if chain.id == chain_id:
+                return chain
+            
+def _write_cif(chain, output_cif):
+    # Create a new structure containing only the selected chain
+    pdb_id = os.path.splitext(os.path.basename(output_cif))[0]
+    structure = Structure.Structure(pdb_id)
+
+    model = Model.Model(0)
+    structure.add(model)
+    #chain._set_full_id((" ", 0, chain.get_id()))
+    chain.id = chain.get_id()
+    chain.parent.id = chain.get_id()
+    model.add(chain)
+
+    # Write out the new CIF file
+    with open(output_cif, 'w') as f:
+        writer = MMCIFIO()
+        writer.set_structure(structure)
+        writer.save(output_cif)
+
+def _add_required_metadata(output_cif, auth_chain_id, mmcif_chain_id, mmcif_dict):
+  """Adding metadata required by feature pipeline. Release date, resolution, experimental method are set to arbitrary values. """
+  with open(output_cif, 'r') as f: 
+    lines = f.readlines()
+
+  struct_asyms = mmcif_parsing.mmcif_loop_to_list('_struct_asym.', mmcif_dict)
+  mmcif_chains_to_entity = collections.defaultdict(list)
+  for struct_asym in struct_asyms:
+    chain_id = struct_asym['_struct_asym.id']
+    entity_id = struct_asym['_struct_asym.entity_id']
+    mmcif_chains_to_entity[chain_id] = entity_id
+
+  new_lines = []
+  for line in lines:
+    if line.startswith("ATOM"):
+      split_line = line.split()
+      split_line[16] = auth_chain_id
+      split_line[6] = mmcif_chain_id
+      split_line.append('\n')
+      new_lines.append(' '.join(split_line))
+    else:
+      new_lines.append(line)
+      
+  extracted_lines = ['loop_\n_entity_poly_seq.entity_id\n_entity_poly_seq.num\n_entity_poly_seq.mon_id\n']
+  chem_comps = set()
+  for i, v in enumerate(mmcif_dict['_entity_poly_seq.entity_id']):
+    if v == mmcif_chains_to_entity[mmcif_chain_id]:
+      extracted_lines.append(f"{v}\t{mmcif_dict['_entity_poly_seq.num'][i]}\t{mmcif_dict['_entity_poly_seq.mon_id'][i]}\n")
+      chem_comps.add(mmcif_dict['_entity_poly_seq.mon_id'][i])
+  extracted_lines.append('#\n')
+
+  extracted_lines.append(f'_entry.id\tXXXX#\n')
+  extracted_lines.append(f'_exptl.method\tX-ray\n#\n')
+  extracted_lines.append(f'_refine.ls_d_res_high\t3\n#\n')
+
+  extracted_lines.append(f"_struct_asym.id\t{mmcif_chain_id}\n_struct_asym.entity_id\t{mmcif_chains_to_entity[mmcif_chain_id]}\n#\n")
+  
+  extracted_lines.append(f"loop_\n_chem_comp.id\n_chem_comp.type\n")
+  for chem_comp in list(chem_comps):
+    extracted_lines.append(f"{chem_comp}\t'L-peptide linking'\n")
+  extracted_lines.append('#\n')
+
+  extracted_lines.extend([
+  f'_pdbx_database_status.entry_id\t{os.path.splitext(os.path.basename(output_cif))[0]}\n',
+    '_pdbx_audit_revision_history.data_content_type\t"Structure model"\n',
+    '_pdbx_audit_revision_history.major_revision\t1\n',
+    '_pdbx_audit_revision_history.minor_revision\t0\n',
+    '_pdbx_audit_revision_history.revision_date\t1971-01-01\n',
+    '#'])
+  new_lines.extend(extracted_lines)
+
+  with open(output_cif, 'w') as f:
+    for line in new_lines:
+      f.write(line)
+
+def split_multichain_template(
+    sequences: list,
+    multichain_template_path: str,
+    kalign_binary_path: str,
+    custom_tempdir: str
+    ):
+    """Split a custom cif template for a complex into individual chains and save them as individual custom templates. A list of custom_template path is returned matching
+     the order of input sequences. """
+
+
+    cif_string = _read_file(multichain_template_path)
+    result = mmcif_parsing.parse(
+        file_id=os.path.splitext(os.path.basename(multichain_template_path))[0], mmcif_string=cif_string)
+    
+    mmcif_object = result.mmcif_object
+    mmcif_dict =  mmcif_object.raw_string
+
+    atom_sites = mmcif_parsing._get_atom_site_list(mmcif_dict)
+    author_to_mmcif_chain_id_mapping = {}
+    mmcif_to_author_chain_id_mapping = {}
+    for atom in atom_sites:
+      if not atom.author_chain_id in author_to_mmcif_chain_id_mapping:
+        author_to_mmcif_chain_id_mapping[atom.author_chain_id] = atom.mmcif_chain_id
+      if not atom.mmcif_chain_id in mmcif_to_author_chain_id_mapping:
+        mmcif_to_author_chain_id_mapping[atom.mmcif_chain_id] = atom.author_chain_id
+
+    mapped_queries_for_chain = _map_multichain_template_to_sequences(sequences,
+                                                                      multichain_template_path,
+                                                                        author_to_mmcif_chain_id_mapping,
+                                                                          kalign_binary_path, custom_tempdir)
+    custom_template_list = [None for _ in range(len(sequences))]
+
+    for auth_chain_id, query_index in mapped_queries_for_chain.items():
+      extracted_chain = _extract_chain_from_cif(multichain_template_path, auth_chain_id)
+
+      output_cif = _get_output_cif(auth_chain_id)
+      mmcif_chain_id = author_to_mmcif_chain_id_mapping[auth_chain_id]
+
+      _write_cif(extracted_chain, output_cif)
+      _add_required_metadata(output_cif, auth_chain_id, mmcif_chain_id, mmcif_dict)
+      custom_template_list[query_index] = os.path.dirname(output_cif)
+    return custom_template_list
 
 def _realign_pdb_template_to_query(
     old_template_sequence: str,
@@ -807,6 +1013,7 @@ def _process_single_hit(
                % (hit_pdb_code, hit_chain_id, hit.sum_probs, hit.index,
                   str(e), parsing_result.errors))
     logging.info(warning)
+    traceback.print_exc()
     if strict_error_check:
       return SingleHitResult(features=None, error=warning, warning=None)
     else:

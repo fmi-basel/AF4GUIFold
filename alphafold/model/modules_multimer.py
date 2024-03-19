@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# Modified by Georg Kempf, Friedrich Miescher Institute for Biomedical Research
 
 """Core modules, which have been refactored in AlphaFold-Multimer.
 
@@ -37,7 +39,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
-
+from absl import logging
 
 def reduce_fn(x, mode):
   if mode == 'none' or mode is None:
@@ -606,6 +608,7 @@ class EmbeddingsAndEvoformer(hk.Module):
         c.pair_channel,
         name='position_activations')(
             rel_feat)
+  
 
   def __call__(self, batch, is_training, safe_key=None):
 
@@ -689,12 +692,13 @@ class EmbeddingsAndEvoformer(hk.Module):
             'template_all_atom_positions': batch['template_all_atom_positions'],
             'template_all_atom_mask': batch['template_all_atom_mask']
         }
-        # Construct a mask such that only intra-chain template features are
-        # computed, since all templates are for each chain individually.
-        multichain_mask = batch['asym_id'][:, None] == batch['asym_id'][None, :]
-        if 'no_multichain_mask' in batch:
-          if batch['no_multichain_mask']:
-            multichain_mask = np.ones_like(multichain_mask, dtype=bool) 
+        if 'multichain_mask' in batch:
+          # Use custom multichain mask
+          multichain_mask = batch['multichain_mask']
+        else:
+          # Construct a mask such that only intra-chain template features are
+          # computed, since all templates are for each chain individually.
+          multichain_mask = batch['asym_id'][:, None] == batch['asym_id'][None, :]
         safe_key, safe_subkey = safe_key.split()
         template_act = template_module(
             query_embedding=pair_activations,

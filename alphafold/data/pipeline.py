@@ -863,6 +863,8 @@ class DataPipeline:
                 self.use_precomputed_msas,
                 lock,
                 self.mgnify_max_hits))
+        else:
+            logging.debug("Skipping msa_jobs because no_msa selected.")
 
         #uniref90 msa also needed for PDB hit search and custom template
         if not no_msa or not no_template:
@@ -976,7 +978,10 @@ class DataPipeline:
             logging.info("Using custom template")
             if os.path.exists(custom_template_path):
                 logging.info(custom_template_path)
-                custom_templates = [os.path.join(custom_template_path, f) for f in os.listdir(custom_template_path)]
+                if os.path.isdir(custom_template_path):
+                    custom_templates = [os.path.join(custom_template_path, f) for f in os.listdir(custom_template_path)]
+                else:
+                    custom_templates = [custom_template_path]
                 if len(custom_templates) > 0:
                     if self.template_searcher_hmm:
                         hhalign_binary_path = self.template_searcher_hmm.hhalign_binary_path
@@ -1016,8 +1021,10 @@ class DataPipeline:
                     logging.info(pdb_template_hits_custom)             
                 else:
                     logging.error(f"No files found in provided custom template folder {custom_template_path}")
+                    raise SystemExit
             else:
                 logging.error(f"Custom template folder {custom_template_path} does not exist.")
+                raise SystemExit
         elif not no_template:
             logging.info("Using templates from the PDB")
             if self.template_searcher_hhr:
