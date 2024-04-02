@@ -276,14 +276,15 @@ class DataPipeline:
                                                             chain_msa_output_dir,
                                                             num_cpu,
                                                             empty_msa,
-                                                            description)
+                                                            description,
+                                                            file_lock=lock)
           chain_features.update(all_seq_msa_features)
     finally:
       if lock:
           lock.release()
     return chain_features
 
-  def _all_seq_msa_features(self, input_fasta_path, msa_output_dir, num_cpu, empty_msa, description):
+  def _all_seq_msa_features(self, input_fasta_path, msa_output_dir, num_cpu, empty_msa, description, file_lock=None):
     """Get MSA features for unclustered uniprot, for pairing."""
     out_path = os.path.join(msa_output_dir, 'uniprot_hits.sto')
     out_path_a3m = os.path.join(msa_output_dir, 'uniprot_hits.a3m')
@@ -297,7 +298,8 @@ class DataPipeline:
               out_path,
               'sto',
               'uniprot',
-              self.use_precomputed_msas)
+              self.use_precomputed_msas,
+              file_lock)
         with open(out_path, 'w') as f:
             f.write(result['uniprot']['sto'])
     if (os.path.exists(out_path_a3m) and not os.path.exists(out_path)):

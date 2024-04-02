@@ -33,7 +33,6 @@ from alphafold.data.tools import hhsearch
 from alphafold.data.tools import hmmsearch
 from alphafold.data.tools import jackhmmer
 from alphafold.data.tools import mmseqs
-from alphafold.data.tools import mmseqs_api
 from alphafold.data.templates import TemplateSearchResult
 from alphafold.data.parsers import Msa
 from alphafold.data.parsers import parse_fasta
