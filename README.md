@@ -65,8 +65,9 @@ Please follow these steps:
 
 1.  Download genetic databases and model parameters:
 
-    *   Install `aria2c` (on most Linux distributions it is available via the
-    package manager).
+    *   Install `aria2c`. On most Linux distributions it is available via the
+    package manager as the `aria2` package (on Debian-based distributions this
+    can be installed by running `sudo apt install aria2`).
 
     *   Please use the script `scripts/download_all_data.sh` to download
     and set up full databases. This may take substantial time (download size is
@@ -366,9 +367,11 @@ section.
       --output_dir=/home/user/absolute_path_to_the_output_dir
     ```
 
-1.  After generating the predicted model, by default AlphaFold runs a relaxation
-    step to improve geometrical quality. You can control this via `--run_relax=true`
-    (default) or `--run_relax=false`.
+1.  After generating the predicted model, AlphaFold runs a relaxation
+    step to improve local geometry. By default, only the best model (by
+    pLDDT) is relaxed (`--models_to_relax=best`), but also all of the models
+    (`--models_to_relax=all`) or none of the models (`--models_to_relax=none`)
+    can be relaxed.
 
 1.  The relaxation step can be run on GPU (faster, but could be less stable) or
     CPU (slow, but stable). This can be controlled with `--enable_gpu_relax=true`
@@ -577,12 +580,15 @@ The contents of each output file are as follows:
     structure, after performing an Amber relaxation procedure on the unrelaxed
     structure prediction (see Jumper et al. 2021, Suppl. Methods 1.8.6 for
     details).
-*   `ranked_*.pdb` – A PDB format text file containing the relaxed predicted
-    structures, after reordering by model confidence. Here `ranked_0.pdb` should
-    contain the prediction with the highest confidence, and `ranked_4.pdb` the
-    prediction with the lowest confidence. To rank model confidence, we use
+*   `ranked_*.pdb` – A PDB format text file containing the predicted structures,
+    after reordering by model confidence. Here `ranked_i.pdb` should contain
+    the prediction with the (`i + 1`)-th highest confidence (so that
+    `ranked_0.pdb` has the highest confidence). To rank model confidence, we use
     predicted LDDT (pLDDT) scores (see Jumper et al. 2021, Suppl. Methods 1.9.6
-    for details).
+    for details). If `--models_to_relax=all` then all ranked structures are
+    relaxed. If `--models_to_relax=best` then only `ranked_0.pdb` is relaxed
+    (the rest are unrelaxed). If `--models_to_relax=none`, then the ranked
+    structures are all unrelaxed.
 *   `ranking_debug.json` – A JSON format text file containing the pLDDT values
     used to perform the model ranking, and a mapping back to the original model
     names.
