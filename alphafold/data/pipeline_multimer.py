@@ -291,7 +291,7 @@ class DataPipeline:
     out_path_mmseqs = os.path.join(msa_output_dir, 'uniprot_mmseqs_hits.a3m')
     self._uniprot_msa_runner.n_cpu = num_cpu
     mmseqs_msa = False
-    if not os.path.exists(out_path) and not os.path.exists(out_path_a3m) and not os.path.exists(out_path_mmseqs):
+    if not os.path.exists(out_path) and not os.path.exists(out_path_a3m) and not os.path.exists(out_path_mmseqs) and not empty_msa:
         result = pipeline.run_msa_tool(
               self._uniprot_msa_runner,
               input_fasta_path,
@@ -302,44 +302,45 @@ class DataPipeline:
               file_lock)
         with open(out_path, 'w') as f:
             f.write(result['uniprot']['sto'])
-    if (os.path.exists(out_path_a3m) and not os.path.exists(out_path)):
-        logging.debug(f"Using {out_path_a3m}")
-        with open(out_path_a3m, 'r') as f:
-            a3m = f.read()
-        result = dict(a3m=a3m)
-        msa = parsers.parse_a3m(result['a3m'])
-    elif os.path.exists(out_path_mmseqs) and not os.path.exists(out_path_a3m) and not os.path.exists(out_path):
-        logging.debug(f"Using {out_path_mmseqs}")
-        with open(out_path_mmseqs, 'r') as f:
-            a3m = f.read()
-        result = dict(a3m=a3m)
-        msa = parsers.parse_a3m(result['a3m'])
-        mmseqs_msa = True
-    elif os.path.exists(out_path):
-        logging.debug(f"Using {out_path}")
-        with open(out_path, 'r') as f:
-            sto = f.read()
-        result = dict(sto=sto)
-        msa = parsers.parse_stockholm(result['sto'])
-    else:
-        raise ValueError("uniprot_hits msa file not found.")
-    msa = msa.truncate(max_seqs=self._max_uniprot_hits)
     if empty_msa is None:
-      logging.debug(f"empty_msa is {empty_msa}")
+      if (os.path.exists(out_path_a3m) and not os.path.exists(out_path)):
+          logging.debug(f"Using {out_path_a3m}")
+          with open(out_path_a3m, 'r') as f:
+              a3m = f.read()
+          result = dict(a3m=a3m)
+          msa = parsers.parse_a3m(result['a3m'])
+      elif os.path.exists(out_path_mmseqs) and not os.path.exists(out_path_a3m) and not os.path.exists(out_path):
+          logging.debug(f"Using {out_path_mmseqs}")
+          with open(out_path_mmseqs, 'r') as f:
+              a3m = f.read()
+          result = dict(a3m=a3m)
+          msa = parsers.parse_a3m(result['a3m'])
+          mmseqs_msa = True
+      elif os.path.exists(out_path):
+          logging.debug(f"Using {out_path}")
+          with open(out_path, 'r') as f:
+              sto = f.read()
+          result = dict(sto=sto)
+          msa = parsers.parse_stockholm(result['sto'])
+      else:
+          raise ValueError("uniprot_hits msa file not found.")
+      msa = msa.truncate(max_seqs=self._max_uniprot_hits)
       if mmseqs_msa:
         logging.info("Generating msa features for uniprot search with accession_species_db")
         all_seq_features = pipeline.make_msa_features([msa], self.accession_species_db)
       else:
         logging.info("Generating msa features for uniprot search")
         all_seq_features = pipeline.make_msa_features([msa])
+
+      logging.info('Uniprot MSA size: %d sequences.',
+      len(msa))
     else:
       logging.info("Using empty MSA for pairing")
       all_seq_features = pipeline.make_msa_features([empty_msa])
+      msa = empty_msa
     valid_feats = msa_pairing.MSA_FEATURES + (
         'msa_species_identifiers',
     )
-    logging.info('Uniprot MSA size: %d sequences.',
-        len(msa))
     if not description in self.msa_stats:
        self.msa_stats[description] = {}
     self.msa_stats[description]['uniprot'] = len(msa)
@@ -404,6 +405,7 @@ class DataPipeline:
             num_cpu=num_cpu,
             file_lock=file_lock)
 
+      logging.debug(chain_features)
       chain_features = convert_monomer_features(chain_features,
                                               chain_id=chain_id)
       all_chain_features[chain_id] = chain_features
